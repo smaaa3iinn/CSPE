@@ -1656,7 +1656,7 @@ def render_mapbox_gl_html(
         "height_px": int(height_px),
         "paris_mask_feature": None,
         "paris_max_bounds": None,
-        "paris_mask_fill_color": "#020617",
+        "paris_mask_fill_color": "#06080A",
         "paris_mask_fill_opacity": 0.9,
         "render_world_copies": True,
     }
@@ -2183,7 +2183,7 @@ def render_mapbox_gl_html(
           type: 'fill',
           source: 'paris-mask',
           paint: {{
-            'fill-color': payload.paris_mask_fill_color || '#020617',
+            'fill-color': payload.paris_mask_fill_color || '#06080A',
             'fill-opacity': Number(payload.paris_mask_fill_opacity ?? 0.9)
           }}
         }});

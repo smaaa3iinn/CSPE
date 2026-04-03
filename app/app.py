@@ -192,8 +192,9 @@ def render_station_details(G, stop_id: str):
 st.markdown(
     """
     <style>
+    @import url("https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&display=swap");
     [data-testid="stAppViewContainer"] {
-        background: #1f1f1f;
+        background: #06080a;
     }
     header[data-testid="stHeader"] {
         background: transparent !important;
@@ -244,8 +245,8 @@ st.markdown(
         padding: 0.5rem 0.65rem 0.55rem !important;
         box-sizing: border-box !important;
         overflow-x: hidden !important;
-        overflow-y: auto !important;
-        background: #1f1f1f !important;
+        overflow-y: hidden !important;
+        background: #12161c !important;
         border: 1px solid rgba(255, 255, 255, 0.1) !important;
         border-radius: 0.85rem !important;
         box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
@@ -258,34 +259,238 @@ st.markdown(
         color: #e2e8f0;
     }
     #controls-portal [data-testid="stVerticalBlock"] {
-        gap: 0.35rem !important;
+        gap: 0.12rem !important;
     }
-    #controls-portal [data-baseweb="select"] > div {
-        background: rgba(15, 23, 42, 0.35) !important;
-        color: #f8fafc !important;
-        border: 1px solid rgba(255, 255, 255, 0.16) !important;
+    #controls-portal p.cspe-overlay-title {
+        font-family: "Rajdhani", "Segoe UI", sans-serif !important;
+        font-size: 0.82rem !important;
+        font-weight: 600 !important;
+        line-height: 1.15 !important;
+        margin: 0.15rem 0 0.08rem 0 !important;
+        padding: 0 !important;
+        color: #c8d0dc !important;
+        opacity: 1 !important;
+        letter-spacing: 0.11em !important;
+        text-transform: uppercase !important;
     }
-    section.main div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:last-child {
-        color: #e2e8f0;
+    #controls-portal div[data-testid="stHorizontalBlock"] {
+        gap: 0.2rem !important;
     }
-    section.main div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:last-child [data-baseweb="select"] > div,
-    section.main div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:last-child .stTextInput input,
-    section.main div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:last-child .stNumberInput input,
-    section.main div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:last-child .stTextArea textarea {
-        background: rgba(15, 23, 42, 0.35) !important;
+    #controls-portal .stButton > button {
+        padding: 0.18rem 0.2rem !important;
+        font-size: 0.68rem !important;
+        line-height: 1.15 !important;
+        min-height: 1.75rem !important;
+        border-radius: 0.4rem !important;
+    }
+    #controls-portal .stButton > button[kind="primary"],
+    #controls-portal .stButton > button[data-testid="baseButton-primary"] {
+        background: #3a414a !important;
+        background-image: none !important;
         color: #f8fafc !important;
         border: 1px solid rgba(255, 255, 255, 0.14) !important;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
     }
-    section.main div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:last-child .stButton button,
-    section.main div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:last-child .stDownloadButton button {
+    #controls-portal .stButton > button[kind="primary"]:hover,
+    #controls-portal .stButton > button[kind="primary"]:focus-visible,
+    #controls-portal .stButton > button[data-testid="baseButton-primary"]:hover,
+    #controls-portal .stButton > button[data-testid="baseButton-primary"]:focus-visible {
+        background: #484f59 !important;
+        background-image: none !important;
+        border-color: rgba(255, 255, 255, 0.2) !important;
+        color: #ffffff !important;
+    }
+    #controls-portal .stButton > button[kind="primary"] *,
+    #controls-portal .stButton > button[data-testid="baseButton-primary"] * {
+        color: inherit !important;
+    }
+    /* Right-rail chrome: only the main 3-column row's right cell (map + settings anchors
+       both live under that row). Avoids nested st.columns rows that also :has(#cspe-right-settings-anchor). */
+    div[data-testid="stHorizontalBlock"]:has(#map-zone-anchor):has(#cspe-right-settings-anchor)
+        > div[data-testid="column"]:last-child {
+        padding-left: clamp(0.315rem, 0.84vw, 0.49rem) !important;
+        padding-right: clamp(0.315rem, 0.84vw, 0.49rem) !important;
+        box-sizing: border-box !important;
+        overflow-x: clip;
+        background: #12161c !important;
+        min-height: 100vh;
+    }
+    div[data-testid="stHorizontalBlock"]:has(#map-zone-anchor):has(#cspe-right-settings-anchor)
+        > div[data-testid="column"]:last-child
+        > div[data-testid="stVerticalBlock"] {
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+    }
+    div[data-testid="stAppViewContainer"]
+        div[data-testid="column"]:has(#cspe-right-settings-anchor),
+    section.main div[data-testid="column"]:has(#cspe-right-settings-anchor),
+    section.main
+        div[data-testid="stHorizontalBlock"]
+        > div[data-testid="column"]:has(#cspe-right-settings-anchor) {
+        color: #e2e8f0;
+        font-size: 0.65rem;
+        box-sizing: border-box !important;
+        overflow-x: clip;
+        background: #12161c !important;
+    }
+    section.main
+        div[data-testid="stHorizontalBlock"]:has(.cspe-left-rail)
+        > div[data-testid="column"]:first-child {
+        background: #12161c !important;
+    }
+    section.main
+        div[data-testid="stHorizontalBlock"]
+        > div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        > div[data-testid="stVerticalBlock"] {
+        gap: 0.18rem !important;
+        box-sizing: border-box !important;
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+        max-width: 100% !important;
+    }
+    section.main
+        div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        [data-testid="element-container"] {
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+        max-width: 100% !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stWidgetLabel"] p {
+        font-family: "Rajdhani", "Segoe UI", sans-serif !important;
+        font-size: 0.65rem !important;
+        font-weight: 500 !important;
+        line-height: 1.15 !important;
+        letter-spacing: 0.06em !important;
+        text-transform: uppercase !important;
+        color: rgba(226, 232, 240, 0.48) !important;
+        margin-bottom: 0.06rem !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stMarkdownContainer"] p,
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stMarkdownContainer"] li {
+        font-family: "Rajdhani", "Segoe UI", sans-serif !important;
+        font-size: 0.7rem !important;
+        line-height: 1.25 !important;
+        margin-bottom: 0.08rem !important;
+        color: rgba(226, 232, 240, 0.88) !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) h3 {
+        font-size: 0.68rem !important;
+        margin: 0.12rem 0 0.06rem 0 !important;
+        line-height: 1.15 !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stMarkdownContainer"] h4 {
+        font-size: 0.6rem !important;
+        margin: 0.1rem 0 0.04rem 0 !important;
+        line-height: 1.15 !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stCaptionContainer"] p {
+        font-family: "Rajdhani", "Segoe UI", sans-serif !important;
+        font-size: 0.58rem !important;
+        margin-top: 0 !important;
+        line-height: 1.2 !important;
+        letter-spacing: 0.04em !important;
+        color: rgba(226, 232, 240, 0.42) !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-baseweb="select"] > div {
+        background: rgba(15, 23, 42, 0.35) !important;
+        color: #e2e8f0 !important;
+        border: 1px solid rgba(255, 255, 255, 0.12) !important;
+        min-height: 1.5rem !important;
+        font-family: "Rajdhani", "Segoe UI", sans-serif !important;
+        font-size: 0.65rem !important;
+        padding-top: 0.1rem !important;
+        padding-bottom: 0.1rem !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stExpander"] {
+        background: transparent !important;
+        border: none !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stExpander"] summary {
+        padding: 0.15rem 0 !important;
+        min-height: unset !important;
+        background: transparent !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stExpander"] summary,
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stExpander"] summary p {
+        font-family: "Rajdhani", "Segoe UI", sans-serif !important;
+        font-size: 1.17rem !important;
+        font-weight: 600 !important;
+        line-height: 1.2 !important;
+        letter-spacing: 0.1em !important;
+        color: rgba(226, 232, 240, 0.72) !important;
+        text-transform: uppercase !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stExpander"] details {
+        font-family: "Rajdhani", "Segoe UI", sans-serif !important;
+        font-size: 0.68rem !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stExpander"] [data-testid="stExpanderDetails"] {
+        padding: 0.2rem 0 0.35rem 0 !important;
+        background: transparent !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-baseweb="slider"] {
+        padding-top: 0.08rem !important;
+        padding-bottom: 0.1rem !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stSlider label p {
+        font-family: "Rajdhani", "Segoe UI", sans-serif !important;
+        font-size: 0.62rem !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stCheckbox {
+        padding: 0.02rem 0 !important;
+        gap: 0.28rem !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stButton button,
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stDownloadButton button {
         background: rgba(15, 23, 42, 0.45) !important;
-        color: #f8fafc !important;
-        border: 1px solid rgba(255, 255, 255, 0.16) !important;
+        color: #e2e8f0 !important;
+        border: 1px solid rgba(255, 255, 255, 0.14) !important;
+        font-family: "Rajdhani", "Segoe UI", sans-serif !important;
+        font-size: 0.65rem !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.08em !important;
+        text-transform: uppercase !important;
+        min-height: 1.55rem !important;
+        padding: 0.14rem 0.4rem !important;
     }
-    section.main div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:last-child [data-testid="stExpander"] {
-        background: rgba(15, 23, 42, 0.25) !important;
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stAlert"] {
+        padding: 0.28rem 0.35rem !important;
+        font-family: "Rajdhani", "Segoe UI", sans-serif !important;
+        background: transparent !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stAlert"] p {
+        font-size: 0.68rem !important;
+        line-height: 1.25 !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-baseweb="notification"] {
+        font-family: "Rajdhani", "Segoe UI", sans-serif !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stSuccess,
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stSuccess"] {
+        background: transparent !important;
+        border: 1px solid rgba(74, 222, 128, 0.25) !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stSuccess p,
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stSuccess"] p {
+        font-family: "Rajdhani", "Segoe UI", sans-serif !important;
+        font-size: 0.7rem !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.05em !important;
+        color: rgba(226, 232, 240, 0.92) !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) textarea,
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) pre {
+        font-family: "Rajdhani", "Segoe UI", monospace !important;
+        font-size: 0.62rem !important;
+        line-height: 1.22 !important;
+        max-height: 6.5rem !important;
+        overflow-y: auto !important;
+        color: rgba(226, 232, 240, 0.9) !important;
+        background: rgba(15, 23, 42, 0.35) !important;
         border: 1px solid rgba(255, 255, 255, 0.08) !important;
-        border-radius: 0.65rem !important;
     }
     #route-bar-portal {
         position: fixed !important;
@@ -298,7 +503,7 @@ st.markdown(
         margin: 0 !important;
         padding: 0.32rem 0.65rem 0.4rem !important;
         box-sizing: border-box !important;
-        background: #1f1f1f !important;
+        background: #12161c !important;
         border: 1px solid rgba(255, 255, 255, 0.1) !important;
         border-radius: 0.85rem !important;
         box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
@@ -334,37 +539,120 @@ st.markdown(
         white-space: nowrap !important;
         min-width: 5.75rem !important;
     }
+    #route-bar-portal .stButton > button[kind="primary"],
+    #route-bar-portal .stButton > button[data-testid="baseButton-primary"] {
+        background: #3a414a !important;
+        background-image: none !important;
+        border: 1px solid rgba(255, 255, 255, 0.14) !important;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+    }
+    #route-bar-portal .stButton > button[kind="primary"]:hover,
+    #route-bar-portal .stButton > button[kind="primary"]:focus-visible,
+    #route-bar-portal .stButton > button[data-testid="baseButton-primary"]:hover,
+    #route-bar-portal .stButton > button[data-testid="baseButton-primary"]:focus-visible {
+        background: #484f59 !important;
+        border-color: rgba(255, 255, 255, 0.2) !important;
+    }
     #route-bar-portal .stAlert {
         padding: 0.35rem 0.5rem !important;
         font-size: 0.8rem !important;
     }
     .cspe-side-panel {
         position: relative;
-        min-height: 100vh;
         width: 100%;
-        background: #1f1f1f;
+        background: #12161c;
+    }
+    /* Orb row sits full-width above guttered controls (see layout in app). */
+    .cspe-orb-slot--bleed {
+        margin: 0 0 0.25rem 0;
+        box-sizing: border-box;
+    }
+    .cspe-net-stats {
+        margin: 0.25rem 0 0.45rem 0;
+        padding: 0;
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
+    .cspe-rail-title {
+        font-family: "Rajdhani", "Segoe UI", sans-serif;
+        font-size: 1.31rem !important;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        color: rgba(226, 232, 240, 0.72) !important;
+        text-transform: uppercase;
+        margin: 0 0 0.55rem 0;
+        line-height: 1.2;
+    }
+    .cspe-rail-title--tight {
+        margin-bottom: 0.35rem !important;
+    }
+    .cspe-rail-title--spaced {
+        margin-top: 0.5rem !important;
+        margin-bottom: 0.45rem !important;
+    }
+    .cspe-rail-subtitle {
+        font-family: "Rajdhani", "Segoe UI", sans-serif;
+        font-size: 0.68rem !important;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        color: rgba(226, 232, 240, 0.52) !important;
+        text-transform: uppercase;
+        margin: 0.32rem 0 0.18rem 0;
+        line-height: 1.2;
+    }
+    .cspe-net-stats__grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        column-gap: 1.5rem;
+        row-gap: 0.28rem;
+        align-items: start;
+    }
+    .cspe-net-stats__item {
+        min-width: 0;
+    }
+    .cspe-net-stats__label {
+        font-family: "Rajdhani", "Segoe UI", sans-serif;
+        font-size: 0.75rem !important;
+        font-weight: 500;
+        color: rgba(226, 232, 240, 0.45) !important;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        margin: 0 0 0.1rem 0;
+        line-height: 1.15;
+    }
+    .cspe-net-stats__value {
+        font-family: "Rajdhani", "Segoe UI", sans-serif;
+        font-size: 3.06rem !important;
+        font-weight: 600;
+        color: #e2e8f0 !important;
+        line-height: 1.02;
+        letter-spacing: 0.02em;
+        font-variant-numeric: tabular-nums;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stMarkdownContainer"]:has(.cspe-net-stats) p,
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stMarkdownContainer"]:has(.cspe-rail-title) p,
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stMarkdownContainer"]:has(.cspe-rail-subtitle) p {
+        margin: 0 !important;
     }
     .cspe-left-rail {
         min-height: 100vh;
         width: 100%;
-        background: #1f1f1f;
+        background: #12161c;
     }
     .cspe-orb-slot {
         display: flex;
         justify-content: center;
         align-items: flex-start;
-        padding-top: 5vh;
+        padding-top: 1.25vh;
         width: 100%;
     }
     .cspe-orb-placeholder {
         position: relative;
-        width: min(300px, 88%);
+        width: min(200px, 76%);
         aspect-ratio: 1 / 1;
         border-radius: 50%;
-        background:
-            radial-gradient(circle at 50% 50%, rgba(32, 205, 255, 0.06) 0%, rgba(32, 205, 255, 0.02) 26%, rgba(2, 6, 23, 0) 56%),
-            radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.08), transparent 18%),
-            radial-gradient(circle at 50% 50%, rgba(15, 23, 42, 0.18), transparent 70%);
+        background: #12161c;
         border: 1px solid rgba(255, 255, 255, 0.08);
         overflow: hidden;
     }
@@ -386,17 +674,13 @@ st.markdown(
         border-radius: 50%;
     }
     .cspe-orb-placeholder::before {
-        background:
-            radial-gradient(circle at center, rgba(69, 211, 255, 0.16), transparent 45%),
-            radial-gradient(circle at center, transparent 58%, rgba(120, 235, 255, 0.16) 59%, transparent 63%);
-        filter: blur(0.5px);
+        background: none;
+        filter: none;
     }
     .cspe-orb-placeholder::after {
         inset: 6%;
-        border: 1px solid rgba(185, 235, 255, 0.16);
-        box-shadow:
-            inset 0 0 40px rgba(125, 221, 255, 0.07),
-            0 0 50px rgba(72, 210, 255, 0.10);
+        border: 1px solid rgba(185, 235, 255, 0.12);
+        box-shadow: inset 0 0 28px rgba(125, 221, 255, 0.04);
     }
     .cspe-orb-placeholder__ring {
         inset: 10%;
@@ -520,16 +804,165 @@ def _fmt(opt):
     return f"{name}  |  {opt['stop_id']}"
 
 
+# Sentinel option when multiple IDFM rows match the same search string.
+_ROUTE_DROPDOWN_PLACEHOLDER = {"stop_id": "__route_pick__", "stop_name": "Pick line…", "line": None}
+
+
+def _route_is_pick_placeholder(opt) -> bool:
+    return bool(opt) and opt.get("stop_id") == "__route_pick__"
+
+
+def _route_is_real_stop(opt) -> bool:
+    return bool(opt) and not _route_is_pick_placeholder(opt)
+
+
+def _route_dropdown_label(opt) -> str:
+    if _route_is_pick_placeholder(opt):
+        return "Pick line…"
+    return _fmt(opt)
+
+
+def _route_choice_equal(a, b) -> bool:
+    if not a or not b:
+        return False
+    return a.get("stop_id") == b.get("stop_id") and a.get("line") == b.get("line")
+
+
+def _route_choice_in_matches(choice, matches: list) -> bool:
+    if not choice or not matches:
+        return False
+    return any(_route_choice_equal(choice, m) for m in matches)
+
+
+def _route_index_for_choice(matches: list, choice) -> int:
+    if not matches:
+        return 0
+    if not choice:
+        return 0
+    for i, m in enumerate(matches):
+        if _route_choice_equal(choice, m):
+            return i
+    return 0
+
+
+def _sync_start_bar_from_pick() -> None:
+    ch = st.session_state.get("controls_start_choice")
+    if _route_is_real_stop(ch):
+        st.session_state["controls_start_q"] = _fmt(ch)
+
+
+def _sync_end_bar_from_pick() -> None:
+    ch = st.session_state.get("controls_end_choice")
+    if _route_is_real_stop(ch):
+        st.session_state["controls_end_q"] = _fmt(ch)
+
+
+def _route_prune_or_reset_pick(
+    matches: list,
+    key: str,
+) -> None:
+    ch = st.session_state.get(key)
+    if ch is None:
+        return
+    if _route_is_pick_placeholder(ch):
+        if len(matches) <= 1:
+            st.session_state.pop(key, None)
+        return
+    if not _route_choice_in_matches(ch, matches):
+        st.session_state.pop(key, None)
+
+
 def _route_bar_compute_ready() -> bool:
     sq = (st.session_state.get("controls_start_q") or "").strip()
     eq = (st.session_state.get("controls_end_q") or "").strip()
     if not sq or not eq:
         return False
-    return st.session_state.get("controls_start_choice") is not None and st.session_state.get("controls_end_choice") is not None
+    return _route_is_real_stop(st.session_state.get("controls_start_choice")) and _route_is_real_stop(
+        st.session_state.get("controls_end_choice")
+    )
 
 
 viz_mode_options = ["Geographic Mapbox", "Abstract 2D graph", "3D network"]
 mode_options = ["all", "metro", "rail", "tram", "bus", "other"]
+OVERLAY_VIZ_LABELS = ["Geographic", "2D graph", "3D network"]
+OVERLAY_MODE_CHOICES: list[tuple[str, str]] = [
+    ("all", "All"),
+    ("metro", "Metro"),
+    ("rail", "Rail"),
+    ("tram", "Tram"),
+    ("bus", "Bus"),
+    ("other", "Other"),
+]
+
+POI_CATEGORY_CHOICES: list[tuple[str, str]] = [
+    ("All", "All"),
+    ("amenity", "Amenity"),
+    ("shop", "Shop"),
+    ("tourism", "Tourism"),
+    ("leisure", "Leisure"),
+]
+
+
+def _render_poi_category_rail_buttons(state_key: str) -> None:
+    valid = {v for v, _ in POI_CATEGORY_CHOICES}
+    cur = st.session_state.get(state_key, "All")
+    if cur not in valid:
+        cur = "All"
+        st.session_state[state_key] = cur
+    st.markdown('<div class="cspe-rail-subtitle">Category</div>', unsafe_allow_html=True)
+    p1 = st.columns(3, gap="small")
+    p2 = st.columns(3, gap="small")
+    for idx, (val, label) in enumerate(POI_CATEGORY_CHOICES):
+        row = p1 if idx < 3 else p2
+        with row[idx % 3]:
+            if st.button(
+                label,
+                key=f"{state_key}__btn__{val}",
+                use_container_width=True,
+                type="primary" if cur == val else "secondary",
+            ):
+                st.session_state[state_key] = val
+                st.rerun()
+
+
+def _render_map_controls_overlay() -> None:
+    cur_viz = st.session_state.get("controls_viz_mode", "Geographic Mapbox")
+    if cur_viz not in viz_mode_options:
+        cur_viz = viz_mode_options[0]
+        st.session_state["controls_viz_mode"] = cur_viz
+
+    st.markdown('<p class="cspe-overlay-title">Visualization</p>', unsafe_allow_html=True)
+    vcols = st.columns(3, gap="small")
+    for i, opt in enumerate(viz_mode_options):
+        with vcols[i]:
+            if st.button(
+                OVERLAY_VIZ_LABELS[i],
+                key=f"overlay_viz_{i}",
+                use_container_width=True,
+                type="primary" if cur_viz == opt else "secondary",
+            ):
+                st.session_state["controls_viz_mode"] = opt
+                st.rerun()
+
+    cur_mode = st.session_state.get("controls_mode", "metro")
+    if cur_mode not in mode_options:
+        cur_mode = "metro"
+        st.session_state["controls_mode"] = cur_mode
+
+    st.markdown('<p class="cspe-overlay-title">Mode</p>', unsafe_allow_html=True)
+    m1 = st.columns(3, gap="small")
+    m2 = st.columns(3, gap="small")
+    for idx, (opt, label) in enumerate(OVERLAY_MODE_CHOICES):
+        row = m1 if idx < 3 else m2
+        with row[idx % 3]:
+            if st.button(
+                label,
+                key=f"overlay_mode_{opt}",
+                use_container_width=True,
+                type="primary" if cur_mode == opt else "secondary",
+            ):
+                st.session_state["controls_mode"] = opt
+                st.rerun()
 
 viz_mode = st.session_state.get("controls_viz_mode", "Geographic Mapbox")
 mode = st.session_state.get("controls_mode", "metro")
@@ -542,8 +975,15 @@ poi_radius_m = int(st.session_state.get("controls_poi_radius_m", 300))
 poi_limit = int(st.session_state.get("controls_poi_limit", 25))
 poi_radius_m_3d = int(st.session_state.get("controls_poi_radius_m_3d", 300))
 poi_limit_3d = int(st.session_state.get("controls_poi_limit_3d", 25))
+_poi_cat_valid = {v for v, _ in POI_CATEGORY_CHOICES}
 poi_category_key = st.session_state.get("controls_poi_category_key", "All")
+if poi_category_key not in _poi_cat_valid:
+    poi_category_key = "All"
+    st.session_state["controls_poi_category_key"] = "All"
 poi_category_key_3d = st.session_state.get("controls_poi_category_key_3d", "All")
+if poi_category_key_3d not in _poi_cat_valid:
+    poi_category_key_3d = "All"
+    st.session_state["controls_poi_category_key_3d"] = "All"
 current_path = st.session_state.get("last_path")
 last_route_result = st.session_state.get("last_route_result")
 last_route_error = st.session_state.get("last_route_error")
@@ -568,38 +1008,149 @@ with left_rail_col:
 with right_col:
     st.markdown(
         """
-        <div class="cspe-side-panel">
-          <div class="cspe-orb-slot">
-            <div class="cspe-orb-placeholder">
-              <div class="cspe-orb-placeholder__ring"></div>
-              <div class="cspe-orb-placeholder__ring-2"></div>
-              <div class="cspe-orb-placeholder__network">
-                <div class="cspe-orb-placeholder__line cspe-orb-placeholder__line--1"></div>
-                <div class="cspe-orb-placeholder__line cspe-orb-placeholder__line--2"></div>
-                <div class="cspe-orb-placeholder__line cspe-orb-placeholder__line--3"></div>
-                <div class="cspe-orb-placeholder__line cspe-orb-placeholder__line--4"></div>
-                <div class="cspe-orb-placeholder__line cspe-orb-placeholder__line--5"></div>
-                <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--1"></div>
-                <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--2"></div>
-                <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--3"></div>
-                <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--4"></div>
-                <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--5"></div>
-                <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--6"></div>
-                <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--7"></div>
-                <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--8"></div>
-                <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--9"></div>
-                <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--10"></div>
-                <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--11"></div>
-                <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--12"></div>
-                <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--center"></div>
-              </div>
-              <div class="cspe-orb-placeholder__core"></div>
+        <div class="cspe-orb-slot cspe-orb-slot--bleed">
+          <div class="cspe-orb-placeholder">
+            <div class="cspe-orb-placeholder__ring"></div>
+            <div class="cspe-orb-placeholder__ring-2"></div>
+            <div class="cspe-orb-placeholder__network">
+              <div class="cspe-orb-placeholder__line cspe-orb-placeholder__line--1"></div>
+              <div class="cspe-orb-placeholder__line cspe-orb-placeholder__line--2"></div>
+              <div class="cspe-orb-placeholder__line cspe-orb-placeholder__line--3"></div>
+              <div class="cspe-orb-placeholder__line cspe-orb-placeholder__line--4"></div>
+              <div class="cspe-orb-placeholder__line cspe-orb-placeholder__line--5"></div>
+              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--1"></div>
+              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--2"></div>
+              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--3"></div>
+              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--4"></div>
+              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--5"></div>
+              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--6"></div>
+              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--7"></div>
+              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--8"></div>
+              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--9"></div>
+              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--10"></div>
+              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--11"></div>
+              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--12"></div>
+              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--center"></div>
             </div>
+            <div class="cspe-orb-placeholder__core"></div>
           </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+    _cspe_rgl, _cspe_rail_main, _cspe_rgr = st.columns([0.656, 9, 0.656], gap="small")
+    with _cspe_rgl:
+        st.empty()
+    with _cspe_rgr:
+        st.empty()
+    with _cspe_rail_main:
+        st.markdown(
+            '<div id="cspe-right-settings-anchor" style="height:0;margin:0;padding:0;line-height:0;font-size:0;"></div>',
+            unsafe_allow_html=True,
+        )
+
+        st.markdown('<div class="cspe-rail-title cspe-rail-title--tight">[ GRAPH ]</div>', unsafe_allow_html=True)
+        use_lcc = st.checkbox("Largest connected component", value=use_lcc, key="controls_use_lcc")
+
+        _nn = G.number_of_nodes()
+        _ne = G.number_of_edges()
+        st.markdown(
+            f"""
+            <div class="cspe-net-stats">
+              <div class="cspe-rail-title cspe-rail-title--tight">[ NETWORK STATS ]</div>
+              <div class="cspe-net-stats__grid">
+                <div class="cspe-net-stats__item">
+                  <div class="cspe-net-stats__label">Nodes</div>
+                  <div class="cspe-net-stats__value">{_nn}</div>
+                </div>
+                <div class="cspe-net-stats__item">
+                  <div class="cspe-net-stats__label">Edges</div>
+                  <div class="cspe-net-stats__value">{_ne}</div>
+                </div>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        with st.expander("[ TOP HUBS ]", expanded=False):
+            for hub in top_hubs(G, k=10):
+                name = hub["stop_name"] if hub["stop_name"] else hub["stop_id"]
+                st.write(f"{name} — degree={hub['degree']}")
+
+        st.markdown(
+            '<div class="cspe-rail-title cspe-rail-title--spaced">[ VIEW OPTIONS ]</div>',
+            unsafe_allow_html=True,
+        )
+        if viz_mode == "Abstract 2D graph":
+            st.checkbox("Zoom to route", value=True, key="controls_zoom_to_path")
+        elif viz_mode == "Geographic Mapbox":
+            st.checkbox("Show transfer edges", value=show_transfers_map, key="controls_show_transfers_map")
+            st.checkbox(
+                "Show path geometry debug",
+                value=show_path_match_debug,
+                disabled=not current_path,
+                key="controls_show_path_match_debug",
+            )
+            st.markdown(
+                '<div class="cspe-rail-title cspe-rail-title--tight">[ NEARBY POIS ]</div>',
+                unsafe_allow_html=True,
+            )
+            st.slider("POI radius (m)", min_value=100, max_value=1000, value=poi_radius_m, step=50, key="controls_poi_radius_m")
+            st.slider("POIs shown per station", min_value=5, max_value=200, value=poi_limit, step=5, key="controls_poi_limit")
+            st.caption("Dense areas can fill the result cap before reaching the full radius.")
+            _render_poi_category_rail_buttons("controls_poi_category_key")
+        else:
+            st.checkbox("Show transfer edges", value=show_transfers_network_3d, key="controls_show_transfers_network_3d")
+            st.checkbox(
+                "Show path geometry debug",
+                value=show_path_match_debug_3d,
+                disabled=not current_path,
+                key="controls_show_path_match_debug_3d",
+            )
+            st.markdown(
+                '<div class="cspe-rail-title cspe-rail-title--tight">[ NEARBY POIS ]</div>',
+                unsafe_allow_html=True,
+            )
+            st.slider("POI radius (m)", min_value=100, max_value=1000, value=poi_radius_m_3d, step=50, key="controls_poi_radius_m_3d")
+            st.slider("POIs shown per station", min_value=5, max_value=200, value=poi_limit_3d, step=5, key="controls_poi_limit_3d")
+            st.caption("Dense areas can fill the result cap before reaching the full radius.")
+            _render_poi_category_rail_buttons("controls_poi_category_key_3d")
+
+        if last_route_error:
+            st.markdown(
+                '<div class="cspe-rail-title cspe-rail-title--spaced">[ ROUTE STATUS ]</div>',
+                unsafe_allow_html=True,
+            )
+            st.error(last_route_error["message"])
+            for line in last_route_error.get("details", []):
+                st.write(line)
+
+        if last_route_result and current_path:
+            with st.expander("[ CURRENT ROUTE ]", expanded=True):
+                st.success(f"Path found: {len(current_path)} stops")
+                if last_route_result.get("distance_m") is not None:
+                    if last_route_result["distance_m"] >= 1000:
+                        st.write(f"Estimated distance: {last_route_result['distance_m'] / 1000:.2f} km")
+                    else:
+                        st.write(f"Estimated distance: {last_route_result['distance_m']:.0f} m")
+                if last_route_result.get("time_s") is not None:
+                    st.write(f"Estimated time: {last_route_result['time_s'] / 60:.1f} min")
+                st.write(f"Transfers: {last_route_result.get('transfers', 0)}")
+
+                pretty = []
+                for sid in current_path[:80]:
+                    nm = G.nodes[sid].get("stop_name", "")
+                    pretty.append(f"{nm} ({sid})" if nm else sid)
+
+                st.text("\n".join(pretty) + ("\n..." if len(current_path) > 80 else ""))
+                st.download_button(
+                    "Download path (txt)",
+                    data=("\n".join(pretty)).encode("utf-8"),
+                    file_name="path.txt",
+                    mime="text/plain",
+                    use_container_width=True,
+                )
 
 with center_col:
     st.markdown('<div id="map-zone-anchor"></div>', unsafe_allow_html=True)
@@ -697,18 +1248,7 @@ with center_col:
     overlay_host = st.container()
     with overlay_host:
         st.markdown('<div id="controls-overlay-anchor"></div>', unsafe_allow_html=True)
-        viz_mode = st.selectbox(
-            "Visualization",
-            viz_mode_options,
-            index=viz_mode_options.index(viz_mode) if viz_mode in viz_mode_options else 0,
-            key="controls_viz_mode",
-        )
-        mode = st.selectbox(
-            "Mode",
-            mode_options,
-            index=mode_options.index(mode) if mode in mode_options else 1,
-            key="controls_mode",
-        )
+        _render_map_controls_overlay()
         st.markdown('<div id="controls-overlay-end"></div>', unsafe_allow_html=True)
 
     compute_clicked = False
@@ -717,21 +1257,97 @@ with center_col:
     route_bar_host = st.container()
     with route_bar_host:
         st.markdown('<div id="route-bar-anchor"></div>', unsafe_allow_html=True)
+
+        sq0 = (st.session_state.get("controls_start_q") or "").strip()
+        eq0 = (st.session_state.get("controls_end_q") or "").strip()
+        start_matches = search_stops(G, sq0, limit=40, mode=mode) if sq0 else []
+        end_matches = search_stops(G, eq0, limit=40, mode=mode) if eq0 else []
+
+        _route_prune_or_reset_pick(start_matches, "controls_start_choice")
+        _route_prune_or_reset_pick(end_matches, "controls_end_choice")
+
+        if len(start_matches) == 1:
+            only_s = start_matches[0]
+            sch = st.session_state.get("controls_start_choice")
+            if sch is None or not _route_choice_equal(sch, only_s):
+                st.session_state["controls_start_choice"] = only_s
+                st.session_state["controls_start_q"] = _fmt(only_s)
+        if len(end_matches) == 1:
+            only_e = end_matches[0]
+            ech = st.session_state.get("controls_end_choice")
+            if ech is None or not _route_choice_equal(ech, only_e):
+                st.session_state["controls_end_choice"] = only_e
+                st.session_state["controls_end_q"] = _fmt(only_e)
+
         rb_main = st.columns([4.2, 4.2, 1.35, 1.35])
         with rb_main[0]:
-            start_q = st.text_input(
-                "Start stop",
-                placeholder="Start stop",
-                key="controls_start_q",
-                label_visibility="collapsed",
-            )
+            s_row = st.columns([2.65, 1.55], gap="small")
+            with s_row[0]:
+                st.text_input(
+                    "Start stop",
+                    placeholder="Start stop",
+                    key="controls_start_q",
+                    label_visibility="collapsed",
+                )
+            with s_row[1]:
+                if sq0 and start_matches:
+                    sc_cur = st.session_state.get("controls_start_choice")
+                    if len(start_matches) == 1:
+                        s_opts = start_matches
+                        ix_s = 0
+                    else:
+                        s_opts = [_ROUTE_DROPDOWN_PLACEHOLDER] + start_matches
+                        if _route_is_pick_placeholder(sc_cur) or sc_cur is None:
+                            ix_s = 0
+                        elif _route_choice_in_matches(sc_cur, start_matches):
+                            ix_s = 1 + _route_index_for_choice(start_matches, sc_cur)
+                        else:
+                            ix_s = 0
+                    st.selectbox(
+                        "Start IDFM",
+                        options=s_opts,
+                        format_func=_route_dropdown_label,
+                        index=min(ix_s, len(s_opts) - 1),
+                        key="controls_start_choice",
+                        label_visibility="collapsed",
+                        on_change=_sync_start_bar_from_pick,
+                    )
+                elif sq0:
+                    st.caption("No match")
         with rb_main[1]:
-            end_q = st.text_input(
-                "End stop",
-                placeholder="End stop",
-                key="controls_end_q",
-                label_visibility="collapsed",
-            )
+            e_row = st.columns([2.65, 1.55], gap="small")
+            with e_row[0]:
+                st.text_input(
+                    "End stop",
+                    placeholder="End stop",
+                    key="controls_end_q",
+                    label_visibility="collapsed",
+                )
+            with e_row[1]:
+                if eq0 and end_matches:
+                    ec_cur = st.session_state.get("controls_end_choice")
+                    if len(end_matches) == 1:
+                        e_opts = end_matches
+                        ix_e = 0
+                    else:
+                        e_opts = [_ROUTE_DROPDOWN_PLACEHOLDER] + end_matches
+                        if _route_is_pick_placeholder(ec_cur) or ec_cur is None:
+                            ix_e = 0
+                        elif _route_choice_in_matches(ec_cur, end_matches):
+                            ix_e = 1 + _route_index_for_choice(end_matches, ec_cur)
+                        else:
+                            ix_e = 0
+                    st.selectbox(
+                        "End IDFM",
+                        options=e_opts,
+                        format_func=_route_dropdown_label,
+                        index=min(ix_e, len(e_opts) - 1),
+                        key="controls_end_choice",
+                        label_visibility="collapsed",
+                        on_change=_sync_end_bar_from_pick,
+                    )
+                elif eq0:
+                    st.caption("No match")
         with rb_main[2]:
             compute_clicked = st.button(
                 "Compute",
@@ -742,39 +1358,6 @@ with center_col:
             )
         with rb_main[3]:
             clear_clicked = st.button("Clear", use_container_width=True, key="controls_clear_path")
-
-    start_matches = search_stops(G, start_q, limit=40, mode=mode) if start_q else []
-    end_matches = search_stops(G, end_q, limit=40, mode=mode) if end_q else []
-
-    with route_bar_host:
-        if start_q or end_q:
-            rb_pick = st.columns(2)
-            with rb_pick[0]:
-                if start_q:
-                    if start_matches:
-                        st.selectbox(
-                            "Select start",
-                            options=start_matches,
-                            format_func=_fmt,
-                            index=0,
-                            key="controls_start_choice",
-                            label_visibility="collapsed",
-                        )
-                    else:
-                        st.caption("No start matches")
-            with rb_pick[1]:
-                if end_q:
-                    if end_matches:
-                        st.selectbox(
-                            "Select end",
-                            options=end_matches,
-                            format_func=_fmt,
-                            index=0,
-                            key="controls_end_choice",
-                            label_visibility="collapsed",
-                        )
-                    else:
-                        st.caption("No end matches")
 
     start_choice = st.session_state.get("controls_start_choice")
     end_choice = st.session_state.get("controls_end_choice")
@@ -813,7 +1396,7 @@ with center_col:
             }
             host.id = 'controls-portal';
             host.style.margin = '0';
-            host.style.overflow = 'auto';
+            host.style.overflow = 'hidden';
             return true;
           };
 
@@ -843,104 +1426,54 @@ with center_col:
             return true;
           };
 
+          const attachRightRailInset = () => {
+            const mapA = document.getElementById('map-zone-anchor');
+            const railA = document.getElementById('cspe-right-settings-anchor');
+            if (!mapA || !railA) {
+              return false;
+            }
+            let el = railA;
+            while (el) {
+              const hb = el.closest('[data-testid="stHorizontalBlock"]');
+              if (!hb) {
+                break;
+              }
+              const cols = [...hb.querySelectorAll(':scope > div[data-testid="column"]')];
+              if (
+                cols.length === 3 &&
+                cols.some((c) => c.contains(mapA)) &&
+                cols.some((c) => c.contains(railA))
+              ) {
+                const rc = cols[2];
+                const pad = 'clamp(5px, 0.84vw, 8px)';
+                rc.style.setProperty('padding-left', pad, 'important');
+                rc.style.setProperty('padding-right', pad, 'important');
+                rc.style.setProperty('box-sizing', 'border-box', 'important');
+                const vb = rc.querySelector(':scope > div[data-testid="stVerticalBlock"]');
+                if (vb) {
+                  vb.style.setProperty('max-width', '100%', 'important');
+                  vb.style.setProperty('box-sizing', 'border-box', 'important');
+                }
+                return true;
+              }
+              el = hb.parentElement;
+            }
+            return false;
+          };
+
           const tryAttachOverlays = () => {
             attachOverlayHost();
             attachRouteBarHost();
+            attachRightRailInset();
           };
           tryAttachOverlays();
           requestAnimationFrame(tryAttachOverlays);
+          setTimeout(tryAttachOverlays, 120);
         })();
         </script>
         """,
         unsafe_allow_javascript=True,
     )
-
-with right_col:
-    use_lcc = st.checkbox("Largest connected component", value=use_lcc, key="controls_use_lcc")
-
-    with st.expander("Network stats", expanded=True):
-        st.write(f"Nodes: {G.number_of_nodes()}")
-        st.write(f"Edges: {G.number_of_edges()}")
-
-    with st.expander("Top hubs", expanded=False):
-        for hub in top_hubs(G, k=10):
-            name = hub["stop_name"] if hub["stop_name"] else hub["stop_id"]
-            st.write(f"{name} — degree={hub['degree']}")
-
-    st.subheader("View options")
-    if viz_mode == "Abstract 2D graph":
-        st.checkbox("Zoom to route", value=True, key="controls_zoom_to_path")
-    elif viz_mode == "Geographic Mapbox":
-        st.checkbox("Show transfer edges", value=show_transfers_map, key="controls_show_transfers_map")
-        st.checkbox(
-            "Show path geometry debug",
-            value=show_path_match_debug,
-            disabled=not current_path,
-            key="controls_show_path_match_debug",
-        )
-        st.markdown("#### Nearby POIs")
-        st.slider("POI radius (m)", min_value=100, max_value=1000, value=poi_radius_m, step=50, key="controls_poi_radius_m")
-        st.slider("POIs shown per station", min_value=5, max_value=200, value=poi_limit, step=5, key="controls_poi_limit")
-        st.caption("Dense areas can fill the result cap before reaching the full radius.")
-        st.selectbox(
-            "POI category",
-            ["All", "amenity", "shop", "tourism", "leisure"],
-            index=["All", "amenity", "shop", "tourism", "leisure"].index(poi_category_key)
-            if poi_category_key in ["All", "amenity", "shop", "tourism", "leisure"]
-            else 0,
-            key="controls_poi_category_key",
-        )
-    else:
-        st.checkbox("Show transfer edges", value=show_transfers_network_3d, key="controls_show_transfers_network_3d")
-        st.checkbox(
-            "Show path geometry debug",
-            value=show_path_match_debug_3d,
-            disabled=not current_path,
-            key="controls_show_path_match_debug_3d",
-        )
-        st.markdown("#### Nearby POIs")
-        st.slider("POI radius (m)", min_value=100, max_value=1000, value=poi_radius_m_3d, step=50, key="controls_poi_radius_m_3d")
-        st.slider("POIs shown per station", min_value=5, max_value=200, value=poi_limit_3d, step=5, key="controls_poi_limit_3d")
-        st.caption("Dense areas can fill the result cap before reaching the full radius.")
-        st.selectbox(
-            "POI category",
-            ["All", "amenity", "shop", "tourism", "leisure"],
-            index=["All", "amenity", "shop", "tourism", "leisure"].index(poi_category_key_3d)
-            if poi_category_key_3d in ["All", "amenity", "shop", "tourism", "leisure"]
-            else 0,
-            key="controls_poi_category_key_3d",
-        )
-
-    if last_route_error:
-        st.error(last_route_error["message"])
-        for line in last_route_error.get("details", []):
-            st.write(line)
-
-    if last_route_result and current_path:
-        with st.expander("Current route", expanded=True):
-            st.success(f"Path found: {len(current_path)} stops")
-            if last_route_result.get("distance_m") is not None:
-                if last_route_result["distance_m"] >= 1000:
-                    st.write(f"Estimated distance: {last_route_result['distance_m'] / 1000:.2f} km")
-                else:
-                    st.write(f"Estimated distance: {last_route_result['distance_m']:.0f} m")
-            if last_route_result.get("time_s") is not None:
-                st.write(f"Estimated time: {last_route_result['time_s'] / 60:.1f} min")
-            st.write(f"Transfers: {last_route_result.get('transfers', 0)}")
-
-            pretty = []
-            for sid in current_path[:80]:
-                nm = G.nodes[sid].get("stop_name", "")
-                pretty.append(f"{nm} ({sid})" if nm else sid)
-
-            st.text("\n".join(pretty) + ("\n..." if len(current_path) > 80 else ""))
-            st.download_button(
-                "Download path (txt)",
-                data=("\n".join(pretty)).encode("utf-8"),
-                file_name="path.txt",
-                mime="text/plain",
-                use_container_width=True,
-            )
 
 with center_col:
     if clear_clicked:
