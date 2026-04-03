@@ -23,7 +23,20 @@ DEFAULT_WALKING_SPEED_M_S = 1.4
 DEFAULT_TRANSFER_PENALTY_S = 180.0
 DEFAULT_SAME_NAME_TRANSFER_M = 400.0
 DEFAULT_NEARBY_TRANSFER_M = 200.0
-EDGE_COLUMNS = ["a", "b", "edge_kind", "mode", "modes", "distance_m", "time_s", "cost", "weight_m"]
+EDGE_COLUMNS = [
+    "a",
+    "b",
+    "edge_kind",
+    "mode",
+    "modes",
+    "route_ids",
+    "route_labels",
+    "route_refs",
+    "distance_m",
+    "time_s",
+    "cost",
+    "weight_m",
+]
 
 
 @dataclass
@@ -142,6 +155,38 @@ def _compute_distances_for_pairs(edges_df: pd.DataFrame, coords: dict[str, tuple
     return distances
 
 
+def _aggregate_route_refs(values) -> list[dict[str, str]]:
+    seen: set[tuple[str, str, str, str, str]] = set()
+    refs: list[dict[str, str]] = []
+
+    for value in values:
+        if not isinstance(value, (list, tuple)) or len(value) != 5:
+            continue
+        mode, route_id, route_short_name, route_long_name, route_label = value
+        key = (
+            str(mode or ""),
+            str(route_id or ""),
+            str(route_short_name or ""),
+            str(route_long_name or ""),
+            str(route_label or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        refs.append(
+            {
+                "mode": key[0],
+                "route_id": key[1],
+                "route_short_name": key[2],
+                "route_long_name": key[3],
+                "route_label": key[4],
+            }
+        )
+
+    refs.sort(key=lambda item: (item["mode"], item["route_id"], item["route_label"], item["route_short_name"]))
+    return refs
+
+
 def _estimate_ride_time(distance_m: float, modes: list[str]) -> float:
     if pd.isna(distance_m):
         return float("nan")
@@ -190,35 +235,75 @@ def build_ride_edges(data: GTFSData, pos_all: pd.DataFrame | None = None) -> pd.
     trips["trip_id"] = trips["trip_id"].astype(str)
     trips["route_id"] = trips["route_id"].astype(str)
 
-    routes = data.routes[["route_id", "route_type"]].copy()
+    routes_cols = ["route_id", "route_type"]
+    if "route_short_name" in data.routes.columns:
+        routes_cols.append("route_short_name")
+    if "route_long_name" in data.routes.columns:
+        routes_cols.append("route_long_name")
+
+    routes = data.routes[routes_cols].copy()
     routes["route_id"] = routes["route_id"].astype(str)
+    if "route_short_name" not in routes.columns:
+        routes["route_short_name"] = ""
+    if "route_long_name" not in routes.columns:
+        routes["route_long_name"] = ""
+    routes["route_short_name"] = routes["route_short_name"].astype(str)
+    routes["route_long_name"] = routes["route_long_name"].astype(str)
 
     merged = st.merge(trips, on="trip_id", how="left").merge(routes, on="route_id", how="left")
     merged = merged.dropna(subset=["route_type"])
     merged["route_type"] = merged["route_type"].astype(int)
     merged["mode"] = merged["route_type"].map(ROUTE_TYPE_TO_MODE).fillna("other")
+    merged["route_label"] = [
+        _route_label(str(mode), short_name, long_name)
+        for mode, short_name, long_name in zip(
+            merged["mode"],
+            merged["route_short_name"],
+            merged["route_long_name"],
+        )
+    ]
 
     merged = merged.sort_values(["trip_id", "stop_sequence"])
     merged["next_stop_id"] = merged.groupby("trip_id")["stop_id"].shift(-1)
 
-    edges = merged.dropna(subset=["next_stop_id"])[["stop_id", "next_stop_id", "mode"]].copy()
+    edges = merged.dropna(subset=["next_stop_id"])[
+        ["stop_id", "next_stop_id", "mode", "route_id", "route_short_name", "route_long_name", "route_label"]
+    ].copy()
     edges = edges[edges["stop_id"] != edges["next_stop_id"]]
     edges.rename(columns={"stop_id": "a", "next_stop_id": "b"}, inplace=True)
     edges["a"] = edges["a"].astype(str)
     edges["b"] = edges["b"].astype(str)
     edges["u"] = edges[["a", "b"]].min(axis=1)
     edges["v"] = edges[["a", "b"]].max(axis=1)
+    edges["route_ref"] = list(
+        zip(
+            edges["mode"],
+            edges["route_id"].astype(str),
+            edges["route_short_name"].astype(str),
+            edges["route_long_name"].astype(str),
+            edges["route_label"].astype(str),
+        )
+    )
 
     agg = (
-        edges.groupby(["u", "v"])["mode"]
-        .agg(lambda s: sorted(set(str(v) for v in s if pd.notna(v))))
+        edges.groupby(["u", "v"]).agg(
+            mode_list=("mode", lambda s: sorted(set(str(v) for v in s if pd.notna(v)))),
+            route_ref_list=("route_ref", _aggregate_route_refs),
+        )
         .reset_index()
-        .rename(columns={"u": "a", "v": "b", "mode": "mode_list"})
+        .rename(columns={"u": "a", "v": "b"})
     )
 
     if agg.empty:
         return _empty_edges_df()
 
+    agg["route_ids"] = agg["route_ref_list"].apply(
+        lambda refs: sorted({str(ref.get("route_id", "")) for ref in refs if str(ref.get("route_id", "")).strip()})
+    )
+    agg["route_labels"] = agg["route_ref_list"].apply(
+        lambda refs: sorted({str(ref.get("route_label", "")) for ref in refs if str(ref.get("route_label", "")).strip()})
+    )
+    agg["route_refs"] = agg["route_ref_list"].apply(lambda refs: list(refs))
     coords = _distance_lookup(pos_all)
     agg["distance_m"] = _compute_distances_for_pairs(agg[["a", "b"]], coords)
     agg["time_s"] = [
@@ -281,6 +366,9 @@ def build_transfer_edges(
                 "edge_kind": "transfer",
                 "mode": "transfer",
                 "modes": "transfer",
+                "route_ids": [],
+                "route_labels": [],
+                "route_refs": [],
                 "distance_m": float(distance_m),
                 "time_s": float(time_s) if not pd.isna(time_s) else float("nan"),
                 "cost": float(cost) if not pd.isna(cost) else float("nan"),
@@ -467,12 +555,23 @@ def _safe_float(value) -> float:
     return float(value)
 
 
-def _resolve_edge_attributes(row, selected_mode: str | None) -> dict[str, float | str]:
+def _resolve_edge_attributes(row, selected_mode: str | None) -> dict[str, object]:
     distance_m = _safe_float(row.distance_m)
     modes = str(row.modes)
     edge_mode = str(row.mode)
     time_s = _safe_float(row.time_s)
     cost = _safe_float(row.cost)
+    route_refs = [dict(ref) for ref in getattr(row, "route_refs", [])]
+
+    if row.edge_kind == "ride" and selected_mode is not None:
+        filtered_refs = [ref for ref in route_refs if str(ref.get("mode", "")) == selected_mode]
+        if filtered_refs:
+            route_refs = filtered_refs
+
+    route_ids = sorted({str(ref.get("route_id", "")) for ref in route_refs if str(ref.get("route_id", "")).strip()})
+    route_labels = sorted(
+        {str(ref.get("route_label", "")) for ref in route_refs if str(ref.get("route_label", "")).strip()}
+    )
 
     if row.edge_kind == "ride" and selected_mode is not None:
         edge_mode = selected_mode
@@ -483,6 +582,9 @@ def _resolve_edge_attributes(row, selected_mode: str | None) -> dict[str, float 
         "edge_kind": str(row.edge_kind),
         "mode": edge_mode,
         "modes": modes,
+        "route_ids": route_ids,
+        "route_labels": route_labels,
+        "route_refs": route_refs,
         "distance_m": distance_m,
         "time_s": time_s,
         "cost": cost,

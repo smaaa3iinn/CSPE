@@ -130,33 +130,12 @@ def summarize_path(G: nx.Graph, path: list[str]):
     }
 
 
-def _resolve_strategy(strategy: str | None, use_weights: bool | None) -> str:
-    if use_weights is not None:
-        return "distance" if use_weights else "hops"
-    strategy = str(strategy or "cost").strip().lower()
-    if strategy not in {"cost", "distance", "hops"}:
-        return "cost"
-    return strategy
-
-
-def _weight_fn(strategy: str):
-    if strategy == "distance":
-        return lambda _u, _v, data: _safe_number(data.get("distance_m")) or _safe_number(data.get("weight_m")) or 1.0
-    if strategy == "cost":
-        return lambda _u, _v, data: (
-            _safe_number(data.get("cost"))
-            or _safe_number(data.get("time_s"))
-            or _safe_number(data.get("distance_m"))
-            or _safe_number(data.get("weight_m"))
-            or 1.0
-        )
-    return None
-
-
-def shortest_path(G: nx.Graph, a: str, b: str, strategy: str = "cost", use_weights: bool | None = None):
+def shortest_path(G: nx.Graph, a: str, b: str, strategy: str = "hops", use_weights: bool | None = None):
     a = str(a)
     b = str(b)
-    strategy = _resolve_strategy(strategy, use_weights)
+    _ = strategy
+    _ = use_weights
+    strategy = "hops"
 
     if a not in G:
         return {"ok": False, "reason": "start_not_found", "path": [], "distance_m": None, "time_s": None, "transfers": 0, "strategy": strategy}
@@ -178,11 +157,7 @@ def shortest_path(G: nx.Graph, a: str, b: str, strategy: str = "cost", use_weigh
         return {"ok": False, "reason": "not_connected", "path": [], "distance_m": None, "time_s": None, "transfers": 0, "strategy": strategy}
 
     try:
-        if strategy == "hops":
-            path = nx.shortest_path(G, a, b)
-        else:
-            path = nx.shortest_path(G, a, b, weight=_weight_fn(strategy))
-
+        path = nx.shortest_path(G, a, b)
         path = [str(x) for x in path]
         summary = summarize_path(G, path)
         return {
@@ -196,24 +171,7 @@ def shortest_path(G: nx.Graph, a: str, b: str, strategy: str = "cost", use_weigh
             "strategy": strategy,
         }
     except Exception:
-        if strategy == "hops":
-            return {"ok": False, "reason": "path_error", "path": [], "distance_m": None, "time_s": None, "transfers": 0, "strategy": strategy}
-
-        try:
-            path = [str(x) for x in nx.shortest_path(G, a, b)]
-            summary = summarize_path(G, path)
-            return {
-                "ok": True,
-                "reason": "ok_fallback_hops",
-                "path": path,
-                "distance_m": summary["distance_m"],
-                "time_s": summary["time_s"],
-                "transfers": summary["transfers"],
-                "mode_counts": summary["mode_counts"],
-                "strategy": "hops",
-            }
-        except Exception:
-            return {"ok": False, "reason": "path_error", "path": [], "distance_m": None, "time_s": None, "transfers": 0, "strategy": strategy}
+        return {"ok": False, "reason": "path_error", "path": [], "distance_m": None, "time_s": None, "transfers": 0, "strategy": strategy}
 
 
 def k_hop_subgraph(G: nx.Graph, center: str, k: int = 2, max_nodes: int = 3000) -> nx.Graph:

@@ -9,15 +9,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.core.graph_loader import (
-    build_edges_enriched,
-    build_graphs_by_mode_with_lines,
-    build_pos_all,
-    load_gtfs,
-)
+from src.core.cache_bundle import load_or_build_graph_bundle
 from src.core.queries import shortest_path
 
-GTFS_DIR = "data/gtfs"
+BUNDLE_PATH = ROOT / "data" / "derived" / "routing" / "graph_bundle.pkl"
+STOP_POPUP_INDEX_PATH = ROOT / "data" / "derived" / "stops" / "stop_popup_index.parquet"
 
 
 def _pick_pair(G: nx.Graph) -> tuple[str, str]:
@@ -28,14 +24,18 @@ def _pick_pair(G: nx.Graph) -> tuple[str, str]:
 
 
 def main():
-    data = load_gtfs(GTFS_DIR)
-    pos_all = build_pos_all(data.stops)
-    edges = build_edges_enriched(data, pos_all=pos_all)
-    graphs, graphs_lcc = build_graphs_by_mode_with_lines(data, edges, pos_all=pos_all)
+    bundle = load_or_build_graph_bundle(
+        ROOT,
+        cache_path=BUNDLE_PATH,
+        stop_popup_index_path=STOP_POPUP_INDEX_PATH,
+    )
+    graphs = bundle["graphs"]
+    graphs_lcc = bundle["graphs_lcc"]
+    edges = bundle["edges_clean"]
 
-    assert not edges.empty, "Enriched edge build returned no edges."
-    assert (edges["edge_kind"] == "ride").any(), "Ride edges are missing."
-    assert (edges["edge_kind"] == "transfer").any(), "Transfer edges are missing."
+    assert edges, "Derived edge bundle returned no edges."
+    assert any(str(edge.get("mode")) == "metro" for edge in edges), "Metro edges are missing."
+    assert any(str(edge.get("mode")) == "bus" for edge in edges), "Bus edges are missing."
 
     for mode, graph in graphs.items():
         assert graph.number_of_nodes() >= 0
@@ -44,26 +44,21 @@ def main():
 
     route_graph = graphs_lcc["all"]
     start, end = _pick_pair(route_graph)
-    for strategy in ("cost", "distance", "hops"):
-        res = shortest_path(route_graph, start, end, strategy=strategy)
-        assert res["ok"], f"Routing failed for strategy={strategy}: {res}"
-        assert res["path"], f"Empty path for strategy={strategy}"
-        print(
-            f"{strategy}: stops={len(res['path'])} "
-            f"distance_m={res['distance_m']} time_s={res['time_s']} transfers={res['transfers']}"
-        )
+    res = shortest_path(route_graph, start, end)
+    assert res["ok"], f"Routing failed: {res}"
+    assert res["path"], "Empty path returned by routing."
+    print(
+        f"hops: stops={len(res['path'])} "
+        f"distance_m={res['distance_m']} time_s={res['time_s']} transfers={res['transfers']}"
+    )
 
-    cost_res = shortest_path(route_graph, start, end, strategy="cost")
-    assert cost_res["distance_m"] is not None, "Cost routing should report distance."
-    assert cost_res["time_s"] is not None, "Cost routing should report time."
-
-    missing_res = shortest_path(route_graph, "__missing__", end, strategy="cost")
+    missing_res = shortest_path(route_graph, "__missing__", end)
     assert not missing_res["ok"] and missing_res["reason"] == "start_not_found"
 
     disconnected = nx.Graph()
     disconnected.add_node("a")
     disconnected.add_node("b")
-    disconnected_res = shortest_path(disconnected, "a", "b", strategy="cost")
+    disconnected_res = shortest_path(disconnected, "a", "b")
     assert not disconnected_res["ok"] and disconnected_res["reason"] == "not_connected"
 
     print("Validation checks passed.")
