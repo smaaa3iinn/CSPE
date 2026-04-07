@@ -26,19 +26,25 @@ from src.viz.plot_mapbox import (
 
 st.set_page_config(page_title="CSPE Transport Graph", layout="wide")
 
-PROJECT_ROOT = "."
-BUNDLE_PATH = os.path.join("data", "derived", "routing", "graph_bundle.pkl")
-STOP_POPUP_INDEX_PATH = os.path.join("data", "derived", "stops", "stop_popup_index.parquet")
-NETWORK_MAPS_DIR = os.path.join("data", "derived", "maps")
-POI_DATA_PATH = os.path.join("data", "normalized", "poi", "poi.parquet")
-POI_TREE_PATH = os.path.join("data", "derived", "indexes", "poi_balltree.pkl")
-POI_NPZ_PATH = os.path.join("data", "derived", "indexes", "poi_balltree.npz")
+
+def _repo_rel(*parts: str) -> str:
+    """Absolute path under repo root (Streamlit cwd may not be the repo root)."""
+    return str(ROOT.joinpath(*parts))
+
+
+PROJECT_ROOT = str(ROOT)
+BUNDLE_PATH = _repo_rel("data", "derived", "routing", "graph_bundle.pkl")
+STOP_POPUP_INDEX_PATH = _repo_rel("data", "derived", "stops", "stop_popup_index.parquet")
+NETWORK_MAPS_DIR = _repo_rel("data", "derived", "maps")
+POI_DATA_PATH = _repo_rel("data", "normalized", "poi", "poi.parquet")
+POI_TREE_PATH = _repo_rel("data", "derived", "indexes", "poi_balltree.pkl")
+POI_NPZ_PATH = _repo_rel("data", "derived", "indexes", "poi_balltree.npz")
 RENDER_GRAPH_PATHS = {
-    "all": os.path.join("data", "derived", "render_graphs", "all.render_graph.json"),
-    "bus": os.path.join("data", "derived", "render_graphs", "bus.render_graph.json"),
-    "metro": os.path.join("data", "derived", "render_graphs", "metro.render_graph.json"),
-    "rail": os.path.join("data", "derived", "render_graphs", "rail.render_graph.json"),
-    "tram": os.path.join("data", "derived", "render_graphs", "tram.render_graph.json"),
+    "all": _repo_rel("data", "derived", "render_graphs", "all.render_graph.json"),
+    "bus": _repo_rel("data", "derived", "render_graphs", "bus.render_graph.json"),
+    "metro": _repo_rel("data", "derived", "render_graphs", "metro.render_graph.json"),
+    "rail": _repo_rel("data", "derived", "render_graphs", "rail.render_graph.json"),
+    "tram": _repo_rel("data", "derived", "render_graphs", "tram.render_graph.json"),
 }
 MAPBOX_ENV_VARS = ("MAPBOX_TOKEN", "MAPBOX_API_KEY", "MAPBOX_ACCESS_TOKEN")
 
@@ -262,6 +268,70 @@ log_event(LOGGER, "app_imported", log_file=str(debug_log_path()))
 def load_bundle(project_root: str, bundle_path: str, stop_popup_index_path: str):
     log_event(LOGGER, "load_bundle_called", project_root=project_root, bundle_path=bundle_path, stop_popup_index_path=stop_popup_index_path)
     return load_or_build_graph_bundle(project_root, cache_path=bundle_path, stop_popup_index_path=stop_popup_index_path)
+
+
+def _graph_data_download_url(*names: str) -> str | None:
+    for name in names:
+        v = os.getenv(name)
+        if v and str(v).strip():
+            return str(v).strip()
+    try:
+        for name in names:
+            if name in st.secrets and st.secrets[name]:
+                return str(st.secrets[name]).strip()
+    except (TypeError, RuntimeError, AttributeError, FileNotFoundError):
+        pass
+    return None
+
+
+def _download_url_to_file(url: str, dest: Path) -> None:
+    from urllib.request import Request, urlopen
+
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    req = Request(url, headers={"User-Agent": "CSPE-Streamlit/1.0"})
+    with urlopen(req, timeout=600) as resp:
+        body = resp.read()
+    tmp.write_bytes(body)
+    if dest.exists():
+        dest.unlink()
+    tmp.rename(dest)
+
+
+def ensure_graph_bundle_inputs() -> None:
+    """`data/` is gitignored; on Streamlit Cloud the pickle/parquet must exist or be downloaded."""
+    bundle = Path(BUNDLE_PATH)
+    popup = Path(STOP_POPUP_INDEX_PATH)
+    if bundle.is_file() and popup.is_file():
+        return
+    bu_url = _graph_data_download_url("CSPE_GRAPH_BUNDLE_URL", "GRAPH_BUNDLE_URL")
+    pop_url = _graph_data_download_url("CSPE_STOP_POPUP_INDEX_URL", "STOP_POPUP_INDEX_URL")
+    try:
+        if not bundle.is_file() and bu_url:
+            log_event(LOGGER, "graph_bundle_download_start", dest=str(bundle))
+            _download_url_to_file(bu_url, bundle)
+            log_event(LOGGER, "graph_bundle_download_done", path=str(bundle))
+        if not popup.is_file() and pop_url:
+            log_event(LOGGER, "stop_popup_download_start", dest=str(popup))
+            _download_url_to_file(pop_url, popup)
+            log_event(LOGGER, "stop_popup_download_done", path=str(popup))
+    except Exception as e:
+        log_event(LOGGER, "graph_data_download_failed", error=str(e))
+        st.error(
+            f"Could not download graph data ({e}). "
+            "Verify **CSPE_GRAPH_BUNDLE_URL** and **CSPE_STOP_POPUP_INDEX_URL** in Secrets (or env)."
+        )
+        st.stop()
+    if not bundle.is_file() or not popup.is_file():
+        st.error(
+            "Missing **graph_bundle.pkl** and/or **stop_popup_index.parquet** under `data/derived/…`. "
+            "They are not committed (`data/` is gitignored). "
+            "**Streamlit Cloud:** add secrets **CSPE_GRAPH_BUNDLE_URL** and **CSPE_STOP_POPUP_INDEX_URL** "
+            "with HTTPS URLs to those files. "
+            "**Local:** build or copy them into `data/derived/`."
+        )
+        st.stop()
 
 
 @st.cache_resource(show_spinner=False)
@@ -1526,6 +1596,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+ensure_graph_bundle_inputs()
 bundle = load_bundle(PROJECT_ROOT, BUNDLE_PATH, STOP_POPUP_INDEX_PATH)
 graphs = bundle["graphs"]
 graphs_lcc = bundle["graphs_lcc"]
