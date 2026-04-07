@@ -1,15 +1,28 @@
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import os
+from contextlib import contextmanager
 
 import streamlit as st
 import streamlit.components.v1 as components
+from streamlit_searchbox import st_searchbox
 
 from src.core.cache_bundle import load_or_build_graph_bundle
 from src.core.debug_log import debug_log_path, get_debug_logger, log_event
 from src.core.poi_index import load_poi_lookup
-from src.core.queries import component_info, search_stops, shortest_path
+from src.core.queries import component_info, search_stops_autocomplete, shortest_path
 from src.core.tools import top_hubs
-from src.viz.plot2d import plot_graph_2d
-from src.viz.plot_mapbox import load_line_geometries, load_render_graph, render_mapbox_gl_html
+from src.viz.plot_mapbox import (
+    load_line_geometries,
+    load_render_graph,
+    normalize_mapbox_style_url,
+    render_mapbox_gl_html,
+)
 
 st.set_page_config(page_title="CSPE Transport Graph", layout="wide")
 
@@ -28,11 +41,219 @@ RENDER_GRAPH_PATHS = {
     "tram": os.path.join("data", "derived", "render_graphs", "tram.render_graph.json"),
 }
 MAPBOX_ENV_VARS = ("MAPBOX_TOKEN", "MAPBOX_API_KEY", "MAPBOX_ACCESS_TOKEN")
-MAPBOX_BASEMAP_STYLES = {
-    "Light": "mapbox://styles/mapbox/light-v11",
-    "Dark": "mapbox://styles/mapbox/dark-v11",
-}
-DEFAULT_MAPBOX_STYLE = MAPBOX_BASEMAP_STYLES["Dark"]
+
+# --- Mapbox token (pick one) ---
+# 1) Easiest for local dev: set your public token string here (leave None to use env only).
+#    Do not commit real tokens to git; use env vars or .env for shared repos.
+MAPBOX_ACCESS_TOKEN_INLINE: str | None = None
+# 2) Or set an environment variable (any one of):
+#    MAPBOX_TOKEN, MAPBOX_API_KEY, MAPBOX_ACCESS_TOKEN
+#    On Streamlit Cloud: App settings → Secrets, e.g. MAPBOX_TOKEN = "pk...."
+
+# Optional: MAPBOX_STYLE_URL=https://api.mapbox.com/styles/v1/USER/ID or mapbox://styles/USER/ID (overrides default).
+DEFAULT_MAPBOX_STYLE = normalize_mapbox_style_url(
+    os.getenv("MAPBOX_STYLE_URL", "").strip() or "mapbox://styles/smaaa3iin/cmnkb703u002001sh48945ojt"
+)
+
+# Self-contained canvas orb (Streamlit markdown strips script; use components.html).
+_NEURAL_ORB_HTML = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+    #orb-root {
+      display: flex; justify-content: center; align-items: center;
+      width: 100%;
+      padding: 2.5rem 0.4rem 0.4rem 0.4rem;
+      margin: 0;
+      box-sizing: border-box;
+      line-height: 0;
+    }
+    canvas { display: block; width: 320px; height: 320px; max-width: 100%; margin: 0; vertical-align: top; }
+  </style>
+</head>
+<body>
+  <div id="orb-root"><canvas id="orb-canvas" width="320" height="320" aria-hidden="true"></canvas></div>
+  <script>
+(function () {
+  const canvas = document.getElementById("orb-canvas");
+  const ctx = canvas.getContext("2d");
+  const W = 320, H = 320, cx = W / 2, cy = H / 2, R2D = 144;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  ctx.scale(dpr, dpr);
+
+  const N = 220;
+  const GOLDEN = Math.PI * (3 - Math.sqrt(5));
+  const nodes = [];
+  for (let i = 0; i < N; i++) {
+    const y = 1 - (i / Math.max(1, N - 1)) * 2;
+    const r = Math.sqrt(Math.max(0, 1 - y * y));
+    const theta = GOLDEN * i;
+    nodes.push({
+      bx: Math.cos(theta) * r,
+      by: y,
+      bz: Math.sin(theta) * r,
+      ph1: (i * 1.618 + 0.2) % (Math.PI * 2),
+      ph2: (i * 0.927 + 1.1) % (Math.PI * 2),
+      ph3: (i * 0.513 + 2.2) % (Math.PI * 2),
+    });
+  }
+
+  const wDrift = 0.00038;
+  const wRotY = 0.00011;
+  const wRotX = 0.000075;
+  const wFloat = 0.00022;
+  const wPulse = 0.0019;
+  const wProx = 0.00032;
+  const NEIGH_CAP = 6;
+
+  function rotY(x, y, z, a) {
+    const c = Math.cos(a), s = Math.sin(a);
+    return { x: c * x + s * z, y, z: -s * x + c * z };
+  }
+  function rotX(x, y, z, a) {
+    const c = Math.cos(a), s = Math.sin(a);
+    return { x, y: c * y - s * z, z: s * y + c * z };
+  }
+  function proj(x, y, z, fl, oy) {
+    const zz = z + fl;
+    const sc = fl / Math.max(0.35, zz);
+    return {
+      x: cx + x * sc * R2D,
+      y: cy - y * sc * R2D + oy,
+      z: z,
+      sc: sc,
+    };
+  }
+  function len3(x, y, z) { return Math.sqrt(x * x + y * y + z * z); }
+  function dist3(px, py, pz, i, j) {
+    const dx = px[i] - px[j], dy = py[i] - py[j], dz = pz[i] - pz[j];
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  const edgeAlpha = new Map();
+  function edgeKey(i, j) { return i < j ? i + "," + j : j + "," + i; }
+  function linkOmitted(i, j) {
+    const a = i < j ? i : j, b = i < j ? j : i;
+    return ((a * 48271 + b * 65521) >>> 0) % 100 < 20;
+  }
+
+  let t0 = performance.now();
+  function frame(now) {
+    const t = now - t0;
+    const rotA = t * wRotY;
+    const rotB = t * wRotX;
+    const floatY = 3.52 * Math.sin(t * wFloat);
+    const pulse = 0.86 + 0.14 * Math.sin(t * wPulse);
+    const dCut = 0.5 + 0.12 * Math.sin(t * wProx);
+    const dCutLo = dCut * 0.88;
+
+    const px = [], py = [], pz = [];
+    for (let i = 0; i < N; i++) {
+      const n = nodes[i];
+      let x = n.bx + 0.038 * Math.sin(t * wDrift + n.ph1);
+      let y = n.by + 0.038 * Math.sin(t * wDrift * 1.07 + n.ph2);
+      let z = n.bz + 0.038 * Math.sin(t * wDrift * 0.93 + n.ph3);
+      const L = len3(x, y, z);
+      const rad = 0.94 + 0.06 * Math.sin(t * wPulse * 0.7 + n.ph1);
+      x = (x / L) * rad;
+      y = (y / L) * rad;
+      z = (z / L) * rad;
+      let p = rotY(x, y, z, rotA);
+      p = rotX(p.x, p.y, p.z, rotB);
+      px[i] = p.x; py[i] = p.y; pz[i] = p.z;
+    }
+
+    const pairs = [];
+    for (let i = 0; i < N; i++) {
+      const near = [];
+      for (let j = 0; j < N; j++) {
+        if (i === j) continue;
+        const d = dist3(px, py, pz, i, j);
+        if (d < dCut) near.push({ j: j, d: d });
+      }
+      near.sort((a, b) => a.d - b.d);
+      for (let k = 0; k < Math.min(NEIGH_CAP, near.length); k++) {
+        const j = near[k].j;
+        if (i < j) pairs.push([i, j, near[k].d]);
+      }
+    }
+
+    const seen = new Set();
+    const uniq = [];
+    for (const [i, j, d] of pairs) {
+      const k = edgeKey(i, j);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      uniq.push([i, j, d]);
+    }
+
+    const FL = 2.85;
+    const P = [];
+    for (let i = 0; i < N; i++) {
+      P.push(proj(px[i], py[i], pz[i], FL, floatY));
+    }
+
+    ctx.clearRect(0, 0, W, H);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, R2D, 0, Math.PI * 2);
+    ctx.clip();
+
+    const lines = uniq.map(([i, j, d]) => ({
+      i: i, j: j, d: d,
+      zm: (P[i].z + P[j].z) * 0.5,
+    })).sort((a, b) => a.zm - b.zm);
+
+    for (const ln of lines) {
+      const k = edgeKey(ln.i, ln.j);
+      const on = ln.d < dCutLo ? 1 : (dCut - ln.d) / (dCut - dCutLo + 1e-6);
+      const prev = edgeAlpha.get(k) || 0;
+      const omit = linkOmitted(ln.i, ln.j);
+      const target = omit ? 0 : Math.max(0, Math.min(1, on));
+      const a = prev * 0.82 + target * 0.18;
+      edgeAlpha.set(k, a);
+      if (a < 0.02 || omit) continue;
+      const al = a * (1 - ln.d / dCut) * 0.42 * pulse;
+      ctx.strokeStyle = "rgba(255,255,255," + al.toFixed(3) + ")";
+      ctx.lineWidth = 0.68;
+      ctx.beginPath();
+      ctx.moveTo(P[ln.i].x, P[ln.i].y);
+      ctx.lineTo(P[ln.j].x, P[ln.j].y);
+      ctx.stroke();
+    }
+
+    const order = P.map((p, idx) => ({ i: idx, z: p.z })).sort((a, b) => a.z - b.z);
+    for (const o of order) {
+      const p = P[o.i];
+      const depth = (p.z + 1) * 0.5;
+      const al = 0.35 + 0.65 * depth;
+      const r = 1.76 + 1.6 * p.sc * 0.012;
+      ctx.fillStyle = "rgba(255,255,255," + (al * pulse).toFixed(3) + ")";
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.restore();
+    ctx.beginPath();
+    ctx.arc(cx, cy, R2D, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(255,255,255,0.14)";
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+  </script>
+</body>
+</html>
+"""
 LOGGER = get_debug_logger("cspe.app")
 log_event(LOGGER, "app_imported", log_file=str(debug_log_path()))
 
@@ -89,11 +310,24 @@ def load_render_graphs_cached(paths: dict[str, str]):
 
 
 def get_mapbox_token():
+    inline = (MAPBOX_ACCESS_TOKEN_INLINE or "").strip()
+    if inline:
+        log_event(LOGGER, "mapbox_token_found", env_name="MAPBOX_ACCESS_TOKEN_INLINE")
+        return inline, "MAPBOX_ACCESS_TOKEN_INLINE"
     for env_name in MAPBOX_ENV_VARS:
         value = os.getenv(env_name)
         if value:
             log_event(LOGGER, "mapbox_token_found", env_name=env_name)
             return value, env_name
+    try:
+        for env_name in MAPBOX_ENV_VARS:
+            if env_name in st.secrets:
+                raw = st.secrets[env_name]
+                if raw:
+                    log_event(LOGGER, "mapbox_token_found", env_name=f"st.secrets.{env_name}")
+                    return str(raw).strip(), f"st.secrets.{env_name}"
+    except (TypeError, RuntimeError, AttributeError):
+        pass
     log_event(LOGGER, "mapbox_token_missing", env_names="|".join(MAPBOX_ENV_VARS))
     return None, None
 
@@ -193,8 +427,27 @@ st.markdown(
     """
     <style>
     @import url("https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&display=swap");
+    :root {
+      --cspe-bg-deep: #050b18;
+      --cspe-bg-surface: #070f1f;
+      --cspe-bg-elevated: rgba(10, 18, 36, 0.78);
+      --cspe-border: rgba(72, 210, 238, 0.22);
+      --cspe-border-muted: rgba(72, 210, 238, 0.11);
+      --cspe-border-hover: rgba(100, 230, 255, 0.38);
+      --cspe-border-strong: rgba(100, 230, 255, 0.34);
+      --cspe-text: rgba(232, 244, 255, 0.92);
+      --cspe-text-muted: rgba(150, 180, 200, 0.58);
+      --cspe-text-dim: rgba(130, 165, 188, 0.45);
+      --cspe-accent-soft: rgba(72, 210, 238, 0.14);
+      --cspe-accent-mid: rgba(72, 210, 238, 0.28);
+      --cspe-radius: 4px;
+      --cspe-space-xs: 0.2rem;
+      --cspe-space-sm: 0.35rem;
+      --cspe-space-md: 0.5rem;
+      --cspe-space-lg: 0.75rem;
+    }
     [data-testid="stAppViewContainer"] {
-        background: #06080a;
+        background: var(--cspe-bg-deep) !important;
     }
     header[data-testid="stHeader"] {
         background: transparent !important;
@@ -222,82 +475,129 @@ st.markdown(
         align-items: stretch;
         gap: 0 !important;
     }
+    /* Map stack: overlays use position:absolute; % is relative to this box (not the viewport). */
     div[data-testid="stVerticalBlock"]:has(#map-zone-anchor) {
-        position: relative;
-        min-height: 100vh;
-        overflow: visible;
+        position: relative !important;
+        min-height: 100vh !important;
+        height: 100vh !important;
+        overflow: visible !important;
         gap: 0 !important;
+        /* Tune overlay placement vs map panel (edit here; values are % of this block except min/max px). */
+        --cspe-ctrl-top: 2.5%;
+        --cspe-ctrl-left: 2%;
+        /* ~30% smaller than prior 35% / 380px box → ×0.7 */
+        --cspe-ctrl-width: 24.5%;
+        --cspe-ctrl-min-w: 300px;
+        --cspe-ctrl-max-w: 300px;
+        --cspe-ctrl-min-h: 140px;
+        --cspe-route-bottom: 2%;
+        --cspe-route-inset: 2%;
     }
     div[data-testid="stVerticalBlock"] > div:has(> #map-zone-anchor) {
         height: 0 !important;
         margin: 0 !important;
     }
     #controls-portal {
-        position: fixed !important;
-        top: 2.75rem !important;
-        left: calc(100vw / 29 + 0.35rem) !important;
-        width: 340px !important;
-        height: 200px !important;
-        max-height: 200px !important;
+        position: absolute !important;
+        top: var(--cspe-ctrl-top) !important;
+        left: var(--cspe-ctrl-left) !important;
+        width: var(--cspe-ctrl-width) !important;
+        min-width: var(--cspe-ctrl-min-w) !important;
+        max-width: var(--cspe-ctrl-max-w) !important;
+        height: auto !important;
+        min-height: var(--cspe-ctrl-min-h) !important;
+        max-height: none !important;
         z-index: 30 !important;
         pointer-events: auto !important;
         margin: 0 !important;
-        padding: 0.5rem 0.65rem 0.55rem !important;
+        padding: 0.35rem 0.53rem !important;
         box-sizing: border-box !important;
-        overflow-x: hidden !important;
-        overflow-y: hidden !important;
-        background: #12161c !important;
-        border: 1px solid rgba(255, 255, 255, 0.1) !important;
-        border-radius: 0.85rem !important;
-        box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+        overflow: visible !important;
+        background: var(--cspe-bg-elevated) !important;
+        border: 1px solid var(--cspe-border) !important;
+        border-radius: var(--cspe-radius) !important;
+        box-shadow: 0 0 0 1px var(--cspe-border-muted), 0 16px 48px rgba(0, 0, 0, 0.42) !important;
+        backdrop-filter: blur(10px);
+        container-type: inline-size;
+        container-name: cspe-controls;
     }
     #controls-portal > div {
         width: 100%;
         pointer-events: auto;
+        overflow: visible !important;
     }
     #controls-portal * {
-        color: #e2e8f0;
+        color: var(--cspe-text);
     }
     #controls-portal [data-testid="stVerticalBlock"] {
-        gap: 0.12rem !important;
+        gap: 0.25rem !important;
+        overflow: visible !important;
+        min-height: 0 !important;
     }
     #controls-portal p.cspe-overlay-title {
         font-family: "Rajdhani", "Segoe UI", sans-serif !important;
-        font-size: 0.82rem !important;
+        font-size: 0.5rem !important;
         font-weight: 600 !important;
-        line-height: 1.15 !important;
-        margin: 0.15rem 0 0.08rem 0 !important;
-        padding: 0 !important;
-        color: #c8d0dc !important;
+        line-height: 1.2 !important;
+        margin: 0 0 0.14rem 0 !important;
+        padding: 0 0 0.14rem 0 !important;
+        border-bottom: 1px solid var(--cspe-border-muted) !important;
+        color: var(--cspe-text-muted) !important;
         opacity: 1 !important;
-        letter-spacing: 0.11em !important;
+        letter-spacing: 0.12em !important;
         text-transform: uppercase !important;
     }
     #controls-portal div[data-testid="stHorizontalBlock"] {
-        gap: 0.2rem !important;
+        gap: 0.25rem !important;
+        flex-wrap: wrap !important;
+        row-gap: 0.25rem !important;
+    }
+    #controls-portal [data-testid="column"] {
+        min-width: 0 !important;
+    }
+    #controls-portal [data-testid="element-container"] {
+        overflow: visible !important;
     }
     #controls-portal .stButton > button {
-        padding: 0.18rem 0.2rem !important;
-        font-size: 0.68rem !important;
-        line-height: 1.15 !important;
-        min-height: 1.75rem !important;
-        border-radius: 0.4rem !important;
+        padding: 0.098rem 0.175rem !important;
+        font-size: 0.8rem !important;
+        line-height: 1.2 !important;
+        min-height: auto !important;
+        height: auto !important;
+        white-space: normal !important;
+        word-break: break-word !important;
+        border-radius: var(--cspe-radius) !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.056em !important;
+        text-transform: uppercase !important;
+        background: transparent !important;
+        border: 1px solid var(--cspe-border) !important;
+        color: var(--cspe-text) !important;
+        box-shadow: none !important;
+    }
+    #controls-portal .stButton > button * {
+        font-size: inherit !important;
+    }
+    #controls-portal .stButton > button[kind="secondary"] {
+        background: transparent !important;
+        border-color: var(--cspe-border-muted) !important;
+        color: var(--cspe-text-muted) !important;
     }
     #controls-portal .stButton > button[kind="primary"],
     #controls-portal .stButton > button[data-testid="baseButton-primary"] {
-        background: #3a414a !important;
+        background: var(--cspe-accent-soft) !important;
         background-image: none !important;
-        color: #f8fafc !important;
-        border: 1px solid rgba(255, 255, 255, 0.14) !important;
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+        color: var(--cspe-text) !important;
+        border: 1px solid var(--cspe-border-strong) !important;
+        box-shadow: none !important;
     }
     #controls-portal .stButton > button[kind="primary"]:hover,
     #controls-portal .stButton > button[kind="primary"]:focus-visible,
     #controls-portal .stButton > button[data-testid="baseButton-primary"]:hover,
     #controls-portal .stButton > button[data-testid="baseButton-primary"]:focus-visible {
-        background: #484f59 !important;
+        background: var(--cspe-accent-mid) !important;
         background-image: none !important;
-        border-color: rgba(255, 255, 255, 0.2) !important;
+        border-color: var(--cspe-border-hover) !important;
         color: #ffffff !important;
     }
     #controls-portal .stButton > button[kind="primary"] *,
@@ -312,7 +612,7 @@ st.markdown(
         padding-right: clamp(0.315rem, 0.84vw, 0.49rem) !important;
         box-sizing: border-box !important;
         overflow-x: clip;
-        background: #12161c !important;
+        background: var(--cspe-bg-surface) !important;
         min-height: 100vh;
     }
     div[data-testid="stHorizontalBlock"]:has(#map-zone-anchor):has(#cspe-right-settings-anchor)
@@ -327,22 +627,25 @@ st.markdown(
     section.main
         div[data-testid="stHorizontalBlock"]
         > div[data-testid="column"]:has(#cspe-right-settings-anchor) {
-        color: #e2e8f0;
-        font-size: 0.65rem;
+        color: var(--cspe-text);
+        /* Settings rail body: ~40% smaller than prior chrome (orb is outside this column). */
+        font-size: 0.39rem;
         box-sizing: border-box !important;
         overflow-x: clip;
-        background: #12161c !important;
+        background: var(--cspe-bg-surface) !important;
     }
     section.main
         div[data-testid="stHorizontalBlock"]:has(.cspe-left-rail)
         > div[data-testid="column"]:first-child {
-        background: #12161c !important;
+        background: var(--cspe-bg-surface) !important;
+        border-right: 1px solid var(--cspe-border-muted) !important;
+        box-sizing: border-box !important;
     }
     section.main
         div[data-testid="stHorizontalBlock"]
         > div[data-testid="column"]:has(#cspe-right-settings-anchor)
         > div[data-testid="stVerticalBlock"] {
-        gap: 0.18rem !important;
+        gap: calc(var(--cspe-space-sm) * 0.6) !important;
         box-sizing: border-box !important;
         margin-left: 0 !important;
         margin-right: 0 !important;
@@ -357,218 +660,741 @@ st.markdown(
     }
     div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stWidgetLabel"] p {
         font-family: "Rajdhani", "Segoe UI", sans-serif !important;
-        font-size: 0.65rem !important;
-        font-weight: 500 !important;
-        line-height: 1.15 !important;
+        font-size: 0.372rem !important;
+        font-weight: 600 !important;
+        line-height: 1.2 !important;
         letter-spacing: 0.06em !important;
         text-transform: uppercase !important;
-        color: rgba(226, 232, 240, 0.48) !important;
-        margin-bottom: 0.06rem !important;
+        color: var(--cspe-text-muted) !important;
+        margin-bottom: calc(var(--cspe-space-xs) * 0.6) !important;
     }
     div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stMarkdownContainer"] p,
     div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stMarkdownContainer"] li {
         font-family: "Rajdhani", "Segoe UI", sans-serif !important;
-        font-size: 0.7rem !important;
-        line-height: 1.25 !important;
-        margin-bottom: 0.08rem !important;
-        color: rgba(226, 232, 240, 0.88) !important;
+        font-size: 0.408rem !important;
+        line-height: 1.35 !important;
+        margin-bottom: calc(var(--cspe-space-xs) * 0.6) !important;
+        color: var(--cspe-text) !important;
     }
     div[data-testid="column"]:has(#cspe-right-settings-anchor) h3 {
-        font-size: 0.68rem !important;
-        margin: 0.12rem 0 0.06rem 0 !important;
-        line-height: 1.15 !important;
+        font-family: "Rajdhani", "Segoe UI", sans-serif !important;
+        font-size: 0.432rem !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.036em !important;
+        color: var(--cspe-text) !important;
+        margin: calc(var(--cspe-space-xs) * 0.6) 0 calc(var(--cspe-space-xs) * 0.6) 0 !important;
+        line-height: 1.2 !important;
     }
     div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stMarkdownContainer"] h4 {
-        font-size: 0.6rem !important;
-        margin: 0.1rem 0 0.04rem 0 !important;
-        line-height: 1.15 !important;
+        font-family: "Rajdhani", "Segoe UI", sans-serif !important;
+        font-size: 0.372rem !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.06em !important;
+        text-transform: uppercase !important;
+        color: var(--cspe-text-muted) !important;
+        margin: calc(var(--cspe-space-xs) * 0.6) 0 calc(var(--cspe-space-xs) * 0.6) 0 !important;
+        line-height: 1.2 !important;
     }
     div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stCaptionContainer"] p {
         font-family: "Rajdhani", "Segoe UI", sans-serif !important;
-        font-size: 0.58rem !important;
+        font-size: 0.348rem !important;
         margin-top: 0 !important;
-        line-height: 1.2 !important;
-        letter-spacing: 0.04em !important;
-        color: rgba(226, 232, 240, 0.42) !important;
+        line-height: 1.25 !important;
+        letter-spacing: 0.036em !important;
+        color: var(--cspe-text-dim) !important;
     }
     div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-baseweb="select"] > div {
-        background: rgba(15, 23, 42, 0.35) !important;
-        color: #e2e8f0 !important;
-        border: 1px solid rgba(255, 255, 255, 0.12) !important;
-        min-height: 1.5rem !important;
+        background: transparent !important;
+        color: var(--cspe-text) !important;
+        border: 1px solid var(--cspe-border) !important;
+        border-radius: var(--cspe-radius) !important;
+        min-height: 0.9rem !important;
         font-family: "Rajdhani", "Segoe UI", sans-serif !important;
-        font-size: 0.65rem !important;
-        padding-top: 0.1rem !important;
-        padding-bottom: 0.1rem !important;
+        font-size: 0.372rem !important;
+        padding-top: 0.06rem !important;
+        padding-bottom: 0.06rem !important;
     }
     div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stExpander"] {
         background: transparent !important;
         border: none !important;
+        border-bottom: 1px solid var(--cspe-border-muted) !important;
         border-radius: 0 !important;
         box-shadow: none !important;
+        margin-bottom: calc(var(--cspe-space-sm) * 0.6) !important;
     }
     div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stExpander"] summary {
-        padding: 0.15rem 0 !important;
+        padding: calc(var(--cspe-space-sm) * 0.6) 0 !important;
         min-height: unset !important;
         background: transparent !important;
     }
     div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stExpander"] summary,
     div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stExpander"] summary p {
         font-family: "Rajdhani", "Segoe UI", sans-serif !important;
-        font-size: 1.17rem !important;
+        font-size: 0.432rem !important;
         font-weight: 600 !important;
         line-height: 1.2 !important;
-        letter-spacing: 0.1em !important;
-        color: rgba(226, 232, 240, 0.72) !important;
+        letter-spacing: 0.084em !important;
+        color: var(--cspe-text-muted) !important;
         text-transform: uppercase !important;
     }
     div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stExpander"] details {
         font-family: "Rajdhani", "Segoe UI", sans-serif !important;
-        font-size: 0.68rem !important;
+        font-size: 0.408rem !important;
     }
     div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stExpander"] [data-testid="stExpanderDetails"] {
-        padding: 0.2rem 0 0.35rem 0 !important;
+        padding: 0 calc(var(--cspe-space-xs) * 0.6) calc(var(--cspe-space-md) * 0.6) 0 !important;
         background: transparent !important;
     }
-    div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-baseweb="slider"] {
-        padding-top: 0.08rem !important;
-        padding-bottom: 0.1rem !important;
-    }
-    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stSlider label p {
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) p.cspe-poi-inline-label {
         font-family: "Rajdhani", "Segoe UI", sans-serif !important;
-        font-size: 0.62rem !important;
+        font-size: 0.36rem !important;
+        font-weight: 600 !important;
+        line-height: 1.25 !important;
+        letter-spacing: 0.048em !important;
+        text-transform: uppercase !important;
+        color: var(--cspe-text-muted) !important;
+        margin: 0 !important;
+        padding: 0 0.09rem 0 0 !important;
+        display: flex !important;
+        align-items: center !important;
+        min-height: 1.23rem !important;
     }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stNumberInput {
+        width: 100% !important;
+        min-width: 0 !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stNumberInput [data-testid="element-container"] {
+        margin-bottom: 0.048rem !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stNumberInput [data-baseweb="input"] > div {
+        background: var(--cspe-bg-elevated) !important;
+        border: 1px solid var(--cspe-border-muted) !important;
+        border-radius: var(--cspe-radius) !important;
+        box-shadow: none !important;
+        min-height: 0.852rem !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stNumberInput:focus-within [data-baseweb="input"] > div {
+        border-color: var(--cspe-border) !important;
+        box-shadow: 0 0 0 1px var(--cspe-border-muted) !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) div[data-testid="stHorizontalBlock"]:has(.stNumberInput) {
+        align-items: center !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stNumberInput input {
+        font-family: "Rajdhani", "Segoe UI", sans-serif !important;
+        font-size: 0.384rem !important;
+        font-weight: 600 !important;
+        font-variant-numeric: tabular-nums !important;
+        color: var(--cspe-text) !important;
+        text-align: right !important;
+        padding: 0.072rem 0.192rem !important;
+        min-height: 0.852rem !important;
+        line-height: 1.2 !important;
+        background: transparent !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stNumberInput button {
+        display: none !important;
+    }
+    /* Graph section: full-width rows aligned with expander summary language */
     div[data-testid="column"]:has(#cspe-right-settings-anchor) .stCheckbox {
-        padding: 0.02rem 0 !important;
-        gap: 0.28rem !important;
+        padding: 0 !important;
+        margin: 0 0 calc(var(--cspe-space-xs) * 0.6) 0 !important;
+        gap: 0 !important;
+        width: 100% !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stCheckbox > label {
+        position: relative !important;
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: center !important;
+        justify-content: flex-start !important;
+        gap: calc(var(--cspe-space-md) * 0.6) !important;
+        width: 100% !important;
+        min-height: 1.41rem !important;
+        padding: calc(var(--cspe-space-sm) * 0.6) calc(var(--cspe-space-md) * 0.6) !important;
+        margin: 0 !important;
+        box-sizing: border-box !important;
+        border: 1px solid var(--cspe-border-muted) !important;
+        border-radius: var(--cspe-radius) !important;
+        background: rgba(8, 14, 28, 0.42) !important;
+        cursor: pointer !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stCheckbox:has([aria-checked="true"]) > label {
+        border-color: var(--cspe-border) !important;
+        background: var(--cspe-accent-soft) !important;
+        box-shadow:
+            0 0 18px rgba(72, 210, 238, 0.12),
+            inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stCheckbox:has(input:disabled) > label {
+        opacity: 0.4 !important;
+        cursor: not-allowed !important;
+        box-shadow: none !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stCheckbox [role="checkbox"] {
+        position: absolute !important;
+        width: 1px !important;
+        height: 1px !important;
+        padding: 0 !important;
+        margin: -1px !important;
+        overflow: hidden !important;
+        clip: rect(0, 0, 0, 0) !important;
+        white-space: nowrap !important;
+        border: 0 !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stCheckbox label p,
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stCheckbox label [data-testid="stMarkdownContainer"] p {
+        font-family: "Rajdhani", "Segoe UI", sans-serif !important;
+        font-size: 0.372rem !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.072em !important;
+        text-transform: uppercase !important;
+        color: var(--cspe-text-muted) !important;
+        margin: 0 !important;
+        flex: 1 1 auto !important;
+        line-height: 1.25 !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stCheckbox:has([aria-checked="true"]) label p,
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        .stCheckbox:has([aria-checked="true"])
+        label
+        [data-testid="stMarkdownContainer"]
+        p {
+        color: var(--cspe-text) !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stCheckbox label::after {
+        content: "" !important;
+        flex: 0 0 0.99rem !important;
+        height: 0.192rem !important;
+        border-radius: 1px !important;
+        border: 1px solid var(--cspe-border-muted) !important;
+        background: rgba(0, 0, 0, 0.2) !important;
+        margin-left: auto !important;
+        box-sizing: border-box !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stCheckbox:has([aria-checked="true"]) label::after {
+        border-color: var(--cspe-border-hover) !important;
+        background: rgba(72, 210, 238, 0.35) !important;
+        box-shadow: 0 0 10px rgba(72, 210, 238, 0.25) !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stCheckbox:has(input:disabled) label::after {
+        opacity: 0.35 !important;
+        box-shadow: none !important;
+    }
+    /* GRAPH toggles: equal cells in one row (anchor ec + next ec’s horizontal block). */
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        [data-testid="element-container"]:has(.cspe-rail-compact-strip-anchor) {
+        margin: 0 !important;
+        padding: 0 !important;
+        min-height: 0 !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        [data-testid="element-container"]:has(.cspe-rail-compact-strip-anchor)
+        + [data-testid="element-container"]
+        [data-testid="stHorizontalBlock"] {
+        display: flex !important;
+        flex-direction: row !important;
+        flex-wrap: nowrap !important;
+        justify-content: flex-start !important;
+        align-items: stretch !important;
+        gap: calc(var(--cspe-space-sm) * 0.65) !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        margin: 0 0 calc(var(--cspe-space-xs) * 0.55) 0 !important;
+        box-sizing: border-box !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        [data-testid="element-container"]:has(.cspe-rail-compact-strip-anchor)
+        + [data-testid="element-container"]
+        [data-testid="stHorizontalBlock"]
+        > div[data-testid="column"] {
+        flex: 1 1 0 !important;
+        min-width: 0 !important;
+        width: auto !important;
+        max-width: none !important;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: stretch !important;
+        justify-content: stretch !important;
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+        margin: 0 !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        [data-testid="element-container"]:has(.cspe-rail-compact-strip-anchor)
+        + [data-testid="element-container"]
+        [data-testid="stHorizontalBlock"]
+        > div[data-testid="column"]
+        > [data-testid="element-container"] {
+        flex: 1 1 auto !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        margin: 0 !important;
+        margin-bottom: 0 !important;
+        min-height: 0 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: stretch !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        [data-testid="element-container"]:has(.cspe-rail-compact-strip-anchor)
+        + [data-testid="element-container"]
+        [data-testid="stHorizontalBlock"]
+        .stButton {
+        flex: 1 1 auto !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        margin: 0 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: stretch !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        [data-testid="element-container"]:has(.cspe-rail-compact-strip-anchor)
+        + [data-testid="element-container"]
+        [data-testid="stHorizontalBlock"]
+        .stButton > button {
+        flex: 1 1 auto !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        min-height: 0.76rem !important;
+        height: 100% !important;
+        box-sizing: border-box !important;
+        padding: 0.048rem 0.1rem !important;
+        font-size: 0.288rem !important;
+        line-height: 1.1 !important;
+        letter-spacing: 0.036em !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        text-align: center !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        [data-testid="element-container"]:has(.cspe-rail-compact-strip-anchor)
+        + [data-testid="element-container"]
+        [data-testid="stHorizontalBlock"]
+        .stButton > button p,
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        [data-testid="element-container"]:has(.cspe-rail-compact-strip-anchor)
+        + [data-testid="element-container"]
+        [data-testid="stHorizontalBlock"]
+        .stButton > button [data-testid="stMarkdownContainer"] p {
+        margin: 0 !important;
+        padding: 0 !important;
+        text-align: center !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+        line-height: inherit !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        [data-testid="element-container"]:has(.cspe-rail-compact-strip-anchor)
+        + [data-testid="element-container"]
+        [data-testid="stHorizontalBlock"]
+        .stButton > button[kind="secondary"] {
+        background: rgba(8, 14, 28, 0.42) !important;
+        border-color: var(--cspe-border-muted) !important;
+        color: var(--cspe-text-muted) !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        [data-testid="element-container"]:has(.cspe-rail-compact-strip-anchor)
+        + [data-testid="element-container"]
+        [data-testid="stHorizontalBlock"]
+        .stButton > button:disabled {
+        opacity: 0.38 !important;
+        cursor: not-allowed !important;
+    }
+    /* POI category: chip row — width from label, nowrap, wrap whole buttons to next row if needed. */
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        [data-testid="element-container"]:has(.cspe-rail-category-chip-row) {
+        margin: 0 !important;
+        padding: 0 !important;
+        min-height: 0 !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        [data-testid="element-container"]:has(.cspe-rail-category-chip-row)
+        + [data-testid="element-container"]
+        [data-testid="stHorizontalBlock"] {
+        display: flex !important;
+        flex-direction: row !important;
+        flex-wrap: wrap !important;
+        justify-content: flex-start !important;
+        align-items: center !important;
+        align-content: flex-start !important;
+        gap: calc(var(--cspe-space-sm) * 0.65) !important;
+        row-gap: calc(var(--cspe-space-sm) * 0.6) !important;
+        column-gap: calc(var(--cspe-space-sm) * 0.65) !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        margin: 0 0 calc(var(--cspe-space-xs) * 0.55) 0 !important;
+        box-sizing: border-box !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        [data-testid="element-container"]:has(.cspe-rail-category-chip-row)
+        + [data-testid="element-container"]
+        [data-testid="stHorizontalBlock"]
+        > div[data-testid="column"] {
+        flex: 0 0 auto !important;
+        width: max-content !important;
+        min-width: min-content !important;
+        max-width: 100% !important;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: stretch !important;
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+        margin: 0 !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        [data-testid="element-container"]:has(.cspe-rail-category-chip-row)
+        + [data-testid="element-container"]
+        [data-testid="stHorizontalBlock"]
+        > div[data-testid="column"]
+        > [data-testid="element-container"] {
+        flex: 0 0 auto !important;
+        width: max-content !important;
+        max-width: 100% !important;
+        margin: 0 !important;
+        margin-bottom: 0 !important;
+        min-height: 0 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: stretch !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        [data-testid="element-container"]:has(.cspe-rail-category-chip-row)
+        + [data-testid="element-container"]
+        [data-testid="stHorizontalBlock"]
+        .stButton {
+        flex: 0 0 auto !important;
+        width: max-content !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+        margin: 0 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: stretch !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        [data-testid="element-container"]:has(.cspe-rail-category-chip-row)
+        + [data-testid="element-container"]
+        [data-testid="stHorizontalBlock"]
+        .stButton > button {
+        flex: 0 0 auto !important;
+        flex-shrink: 0 !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: auto !important;
+        min-width: min-content !important;
+        max-width: none !important;
+        min-height: 0.76rem !important;
+        height: auto !important;
+        box-sizing: border-box !important;
+        padding: 0.048rem 0.22rem !important;
+        font-size: 0.288rem !important;
+        line-height: 1.1 !important;
+        letter-spacing: 0.036em !important;
+        white-space: nowrap !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+        word-break: normal !important;
+        overflow-wrap: normal !important;
+        text-align: center !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        [data-testid="element-container"]:has(.cspe-rail-category-chip-row)
+        + [data-testid="element-container"]
+        [data-testid="stHorizontalBlock"]
+        .stButton > button p,
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        [data-testid="element-container"]:has(.cspe-rail-category-chip-row)
+        + [data-testid="element-container"]
+        [data-testid="stHorizontalBlock"]
+        .stButton > button [data-testid="stMarkdownContainer"] p {
+        margin: 0 !important;
+        padding: 0 !important;
+        text-align: center !important;
+        width: auto !important;
+        max-width: none !important;
+        white-space: nowrap !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+        word-break: normal !important;
+        overflow-wrap: normal !important;
+        line-height: inherit !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        [data-testid="element-container"]:has(.cspe-rail-category-chip-row)
+        + [data-testid="element-container"]
+        [data-testid="stHorizontalBlock"]
+        .stButton > button[kind="secondary"] {
+        background: rgba(8, 14, 28, 0.42) !important;
+        border-color: var(--cspe-border-muted) !important;
+        color: var(--cspe-text-muted) !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        [data-testid="element-container"]:has(.cspe-rail-category-chip-row)
+        + [data-testid="element-container"]
+        [data-testid="stHorizontalBlock"]
+        .stButton > button:disabled {
+        opacity: 0.38 !important;
+        cursor: not-allowed !important;
     }
     div[data-testid="column"]:has(#cspe-right-settings-anchor) .stButton button,
     div[data-testid="column"]:has(#cspe-right-settings-anchor) .stDownloadButton button {
-        background: rgba(15, 23, 42, 0.45) !important;
-        color: #e2e8f0 !important;
-        border: 1px solid rgba(255, 255, 255, 0.14) !important;
+        background: transparent !important;
+        color: var(--cspe-text) !important;
+        border: 1px solid var(--cspe-border) !important;
+        border-radius: var(--cspe-radius) !important;
         font-family: "Rajdhani", "Segoe UI", sans-serif !important;
-        font-size: 0.65rem !important;
+        font-size: 0.372rem !important;
         font-weight: 600 !important;
-        letter-spacing: 0.08em !important;
+        letter-spacing: 0.06em !important;
         text-transform: uppercase !important;
-        min-height: 1.55rem !important;
-        padding: 0.14rem 0.4rem !important;
+        min-height: 0.9rem !important;
+        padding: 0.108rem 0.24rem !important;
+        box-shadow: none !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stButton button *,
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stDownloadButton button * {
+        font-size: inherit !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stButton > button[kind="primary"],
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stDownloadButton > button[kind="primary"],
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        .stButton > button[data-testid="baseButton-primary"],
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        .stDownloadButton > button[data-testid="baseButton-primary"] {
+        background: var(--cspe-accent-soft) !important;
+        background-image: none !important;
+        border-color: var(--cspe-border-strong) !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stButton > button[kind="primary"]:hover,
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stButton > button[kind="primary"]:focus-visible,
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stDownloadButton > button[kind="primary"]:hover,
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .stDownloadButton > button[kind="primary"]:focus-visible,
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        .stButton > button[data-testid="baseButton-primary"]:hover,
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        .stButton > button[data-testid="baseButton-primary"]:focus-visible,
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        .stDownloadButton > button[data-testid="baseButton-primary"]:hover,
+    div[data-testid="column"]:has(#cspe-right-settings-anchor)
+        .stDownloadButton > button[data-testid="baseButton-primary"]:focus-visible {
+        background: var(--cspe-accent-mid) !important;
+        border-color: var(--cspe-border-hover) !important;
+        color: #ffffff !important;
     }
     div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stAlert"] {
-        padding: 0.28rem 0.35rem !important;
+        padding: calc(var(--cspe-space-sm) * 0.6) calc(var(--cspe-space-md) * 0.6) !important;
         font-family: "Rajdhani", "Segoe UI", sans-serif !important;
-        background: transparent !important;
-        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        background: var(--cspe-bg-elevated) !important;
+        border: 1px solid var(--cspe-border) !important;
+        border-radius: var(--cspe-radius) !important;
     }
     div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stAlert"] p {
-        font-size: 0.68rem !important;
-        line-height: 1.25 !important;
+        font-size: 0.372rem !important;
+        line-height: 1.35 !important;
+        color: var(--cspe-text) !important;
     }
     div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-baseweb="notification"] {
         font-family: "Rajdhani", "Segoe UI", sans-serif !important;
     }
     div[data-testid="column"]:has(#cspe-right-settings-anchor) .stSuccess,
     div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stSuccess"] {
-        background: transparent !important;
-        border: 1px solid rgba(74, 222, 128, 0.25) !important;
+        background: rgba(34, 197, 94, 0.06) !important;
+        border: 1px solid rgba(74, 222, 128, 0.28) !important;
+        border-radius: var(--cspe-radius) !important;
     }
     div[data-testid="column"]:has(#cspe-right-settings-anchor) .stSuccess p,
     div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stSuccess"] p {
         font-family: "Rajdhani", "Segoe UI", sans-serif !important;
-        font-size: 0.7rem !important;
+        font-size: 0.384rem !important;
         font-weight: 600 !important;
-        letter-spacing: 0.05em !important;
-        color: rgba(226, 232, 240, 0.92) !important;
+        letter-spacing: 0.048em !important;
+        color: var(--cspe-text) !important;
     }
     div[data-testid="column"]:has(#cspe-right-settings-anchor) textarea,
     div[data-testid="column"]:has(#cspe-right-settings-anchor) pre {
-        font-family: "Rajdhani", "Segoe UI", monospace !important;
-        font-size: 0.62rem !important;
-        line-height: 1.22 !important;
-        max-height: 6.5rem !important;
+        font-family: ui-monospace, "Cascadia Code", "Segoe UI Mono", monospace !important;
+        font-size: 0.348rem !important;
+        line-height: 1.35 !important;
+        max-height: 3.9rem !important;
         overflow-y: auto !important;
-        color: rgba(226, 232, 240, 0.9) !important;
-        background: rgba(15, 23, 42, 0.35) !important;
-        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        color: var(--cspe-text) !important;
+        background: var(--cspe-bg-elevated) !important;
+        border: 1px solid var(--cspe-border) !important;
+        border-radius: var(--cspe-radius) !important;
     }
     #route-bar-portal {
-        position: fixed !important;
-        bottom: 0.65rem !important;
-        left: calc(100vw / 29 + 0.55rem) !important;
-        width: calc(100vw * 21 / 29 - 1.1rem) !important;
-        max-width: min(1180px, calc(100vw * 21 / 29 - 1.1rem)) !important;
-        z-index: 29 !important;
+        position: absolute !important;
+        left: var(--cspe-route-inset) !important;
+        right: var(--cspe-route-inset) !important;
+        width: auto !important;
+        max-width: none !important;
+        bottom: var(--cspe-route-bottom) !important;
+        z-index: 80 !important;
         pointer-events: auto !important;
         margin: 0 !important;
-        padding: 0.32rem 0.65rem 0.4rem !important;
+        /* Equal top/bottom inset (was space-sm top + space-md bottom → looked bottom-heavy). */
+        padding: var(--cspe-space-md) var(--cspe-space-md) !important;
         box-sizing: border-box !important;
-        background: #12161c !important;
-        border: 1px solid rgba(255, 255, 255, 0.1) !important;
-        border-radius: 0.85rem !important;
-        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+        background: var(--cspe-bg-elevated) !important;
+        border: 1px solid var(--cspe-border) !important;
+        border-radius: var(--cspe-radius) !important;
+        box-shadow: 0 0 0 1px var(--cspe-border-muted), 0 12px 40px rgba(0, 0, 0, 0.42) !important;
+        backdrop-filter: blur(10px);
+        overflow: visible !important;
     }
     #route-bar-portal > div {
         width: 100%;
     }
     #route-bar-portal [data-testid="stVerticalBlock"] {
-        gap: 0.25rem !important;
+        gap: var(--cspe-space-sm) !important;
+    }
+    /* Bottom-align columns: search slots are shorter than button columns; center would float inputs upward. */
+    #route-bar-portal[data-testid="stHorizontalBlock"],
+    #route-bar-portal [data-testid="stHorizontalBlock"] {
+        align-items: flex-end !important;
+        gap: var(--cspe-space-sm) !important;
+        flex-wrap: nowrap !important;
+    }
+    #route-bar-portal [data-testid="element-container"] {
+        margin-top: 0 !important;
+        margin-bottom: 0 !important;
+        overflow: visible !important;
+    }
+    #route-bar-portal [data-testid="element-container"]:has(#route-bar-portal-root) {
+        margin: 0 !important;
+        padding: 0 !important;
+        min-height: 0 !important;
+    }
+    #route-bar-portal [data-testid="column"] {
+        overflow: visible !important;
+    }
+    /* Search columns: fixed layout slot; iframe is absolutely positioned tall so it opens menu upward without resizing the row. */
+    #route-bar-portal [data-testid="column"]:has(iframe[title="streamlit_searchbox.searchbox"]) {
+        position: relative !important;
+        min-height: 2.5rem !important;
+        height: 2.5rem !important;
+        max-height: 2.5rem !important;
+        overflow: visible !important;
+        align-self: flex-end !important;
+        padding-top: 0 !important;
+    }
+    #route-bar-portal [data-testid="element-container"]:has(iframe[title="streamlit_searchbox.searchbox"]) {
+        overflow: visible !important;
+        margin-bottom: 0 !important;
+    }
+    #route-bar-portal .stTextInput,
+    #route-bar-portal .stButton {
+        margin: 0 !important;
+    }
+    #route-bar-portal [data-testid="column"]:has(.stButton) {
+        align-self: flex-end !important;
+        display: flex !important;
+        flex-direction: column !important;
+        justify-content: flex-end !important;
+    }
+    #route-bar-portal [data-testid="column"]:has(.stButton) [data-testid="element-container"] {
+        margin-top: 0 !important;
+        margin-bottom: 0 !important;
+    }
+    #route-bar-portal iframe[title="streamlit_searchbox.searchbox"] {
+        position: absolute !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        width: 100% !important;
+        height: 300px !important;
+        min-height: 300px !important;
+        max-height: 300px !important;
+        margin: 0 !important;
+        z-index: 90 !important;
+        border: none !important;
+        pointer-events: auto !important;
     }
     #route-bar-portal label,
     #route-bar-portal [data-testid="stWidgetLabel"] p {
-        font-size: 0.78rem !important;
-        margin-bottom: 0.15rem !important;
+        font-family: "Rajdhani", "Segoe UI", sans-serif !important;
+        font-size: 0.62rem !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.1em !important;
+        text-transform: uppercase !important;
+        color: var(--cspe-text-muted) !important;
+        margin-bottom: var(--cspe-space-xs) !important;
     }
     #route-bar-portal [data-baseweb="select"] > div,
     #route-bar-portal .stTextInput input {
-        background: rgba(15, 23, 42, 0.35) !important;
-        color: #f8fafc !important;
-        border: 1px solid rgba(255, 255, 255, 0.14) !important;
+        background: transparent !important;
+        color: var(--cspe-text) !important;
+        border: 1px solid var(--cspe-border) !important;
+        border-radius: var(--cspe-radius) !important;
         min-height: 2.1rem !important;
+        font-family: "Rajdhani", "Segoe UI", sans-serif !important;
+        font-size: 0.68rem !important;
     }
     #route-bar-portal .stButton button {
-        background: rgba(15, 23, 42, 0.45) !important;
-        color: #f8fafc !important;
-        border: 1px solid rgba(255, 255, 255, 0.16) !important;
+        background: transparent !important;
+        color: var(--cspe-text) !important;
+        border: 1px solid var(--cspe-border) !important;
+        border-radius: var(--cspe-radius) !important;
         min-height: 2.1rem !important;
         padding-top: 0.2rem !important;
         padding-bottom: 0.2rem !important;
         padding-left: 0.65rem !important;
         padding-right: 0.65rem !important;
-        font-size: 0.8rem !important;
+        font-family: "Rajdhani", "Segoe UI", sans-serif !important;
+        font-size: 0.68rem !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.1em !important;
+        text-transform: uppercase !important;
         white-space: nowrap !important;
         min-width: 5.75rem !important;
+        box-shadow: none !important;
     }
     #route-bar-portal .stButton > button[kind="primary"],
     #route-bar-portal .stButton > button[data-testid="baseButton-primary"] {
-        background: #3a414a !important;
+        background: var(--cspe-accent-soft) !important;
         background-image: none !important;
-        border: 1px solid rgba(255, 255, 255, 0.14) !important;
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+        border: 1px solid var(--cspe-border-strong) !important;
+        box-shadow: none !important;
     }
     #route-bar-portal .stButton > button[kind="primary"]:hover,
     #route-bar-portal .stButton > button[kind="primary"]:focus-visible,
     #route-bar-portal .stButton > button[data-testid="baseButton-primary"]:hover,
     #route-bar-portal .stButton > button[data-testid="baseButton-primary"]:focus-visible {
-        background: #484f59 !important;
-        border-color: rgba(255, 255, 255, 0.2) !important;
+        background: var(--cspe-accent-mid) !important;
+        border-color: var(--cspe-border-hover) !important;
+        color: #ffffff !important;
     }
     #route-bar-portal .stAlert {
-        padding: 0.35rem 0.5rem !important;
-        font-size: 0.8rem !important;
+        padding: var(--cspe-space-sm) var(--cspe-space-md) !important;
+        font-size: 0.64rem !important;
+        background: var(--cspe-bg-elevated) !important;
+        border: 1px solid var(--cspe-border) !important;
+        border-radius: var(--cspe-radius) !important;
     }
     .cspe-side-panel {
         position: relative;
         width: 100%;
-        background: #12161c;
-    }
-    /* Orb row sits full-width above guttered controls (see layout in app). */
-    .cspe-orb-slot--bleed {
-        margin: 0 0 0.25rem 0;
+        background: var(--cspe-bg-elevated);
+        border: 1px solid var(--cspe-border-muted);
+        border-radius: var(--cspe-radius);
+        padding: var(--cspe-space-md) var(--cspe-space-md);
+        margin-bottom: var(--cspe-space-md);
         box-sizing: border-box;
     }
     .cspe-net-stats {
-        margin: 0.25rem 0 0.45rem 0;
+        margin: var(--cspe-space-sm) 0 var(--cspe-space-md) 0;
         padding: 0;
         background: transparent !important;
         border: none !important;
@@ -576,36 +1402,38 @@ st.markdown(
     }
     .cspe-rail-title {
         font-family: "Rajdhani", "Segoe UI", sans-serif;
-        font-size: 1.31rem !important;
+        font-size: 0.75rem !important;
         font-weight: 600;
         letter-spacing: 0.14em;
-        color: rgba(226, 232, 240, 0.72) !important;
+        color: var(--cspe-text-muted) !important;
         text-transform: uppercase;
-        margin: 0 0 0.55rem 0;
+        margin: 0 0 var(--cspe-space-sm) 0;
+        padding: 0 0 var(--cspe-space-sm) 0;
         line-height: 1.2;
+        border-bottom: 1px solid var(--cspe-border-muted);
     }
     .cspe-rail-title--tight {
-        margin-bottom: 0.35rem !important;
+        margin-bottom: var(--cspe-space-xs) !important;
     }
     .cspe-rail-title--spaced {
-        margin-top: 0.5rem !important;
-        margin-bottom: 0.45rem !important;
+        margin-top: var(--cspe-space-md) !important;
+        margin-bottom: var(--cspe-space-md) !important;
     }
     .cspe-rail-subtitle {
         font-family: "Rajdhani", "Segoe UI", sans-serif;
-        font-size: 0.68rem !important;
+        font-size: 0.62rem !important;
         font-weight: 600;
         letter-spacing: 0.12em;
-        color: rgba(226, 232, 240, 0.52) !important;
+        color: var(--cspe-text-dim) !important;
         text-transform: uppercase;
-        margin: 0.32rem 0 0.18rem 0;
-        line-height: 1.2;
+        margin: var(--cspe-space-sm) 0 var(--cspe-space-xs) 0;
+        line-height: 1.25;
     }
     .cspe-net-stats__grid {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        column-gap: 1.5rem;
-        row-gap: 0.28rem;
+        column-gap: var(--cspe-space-lg);
+        row-gap: var(--cspe-space-sm);
         align-items: start;
     }
     .cspe-net-stats__item {
@@ -613,22 +1441,56 @@ st.markdown(
     }
     .cspe-net-stats__label {
         font-family: "Rajdhani", "Segoe UI", sans-serif;
-        font-size: 0.75rem !important;
-        font-weight: 500;
-        color: rgba(226, 232, 240, 0.45) !important;
-        letter-spacing: 0.08em;
+        font-size: 0.58rem !important;
+        font-weight: 600;
+        color: var(--cspe-text-dim) !important;
+        letter-spacing: 0.1em;
         text-transform: uppercase;
-        margin: 0 0 0.1rem 0;
-        line-height: 1.15;
+        margin: 0 0 var(--cspe-space-xs) 0;
+        line-height: 1.2;
     }
     .cspe-net-stats__value {
         font-family: "Rajdhani", "Segoe UI", sans-serif;
         font-size: 3.06rem !important;
         font-weight: 600;
-        color: #e2e8f0 !important;
+        color: var(--cspe-text) !important;
         line-height: 1.02;
         letter-spacing: 0.02em;
         font-variant-numeric: tabular-nums;
+    }
+    /* Markdown chrome inside settings rail only (orb sits in sibling column stack). */
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .cspe-rail-title {
+        font-size: 0.45rem !important;
+        margin: 0 0 calc(var(--cspe-space-sm) * 0.6) 0 !important;
+        padding: 0 0 calc(var(--cspe-space-sm) * 0.6) 0 !important;
+        letter-spacing: 0.084em !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .cspe-rail-title--tight {
+        margin-bottom: calc(var(--cspe-space-xs) * 0.6) !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .cspe-rail-title--spaced {
+        margin-top: calc(var(--cspe-space-md) * 0.6) !important;
+        margin-bottom: calc(var(--cspe-space-md) * 0.6) !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .cspe-rail-subtitle {
+        font-size: 0.372rem !important;
+        margin: calc(var(--cspe-space-sm) * 0.6) 0 calc(var(--cspe-space-xs) * 0.6) 0 !important;
+        letter-spacing: 0.072em !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .cspe-net-stats {
+        margin: calc(var(--cspe-space-sm) * 0.6) 0 calc(var(--cspe-space-md) * 0.6) 0 !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .cspe-net-stats__grid {
+        column-gap: calc(var(--cspe-space-lg) * 0.6) !important;
+        row-gap: calc(var(--cspe-space-sm) * 0.6) !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .cspe-net-stats__label {
+        font-size: 0.348rem !important;
+        margin: 0 0 calc(var(--cspe-space-xs) * 0.6) 0 !important;
+        letter-spacing: 0.06em !important;
+    }
+    div[data-testid="column"]:has(#cspe-right-settings-anchor) .cspe-net-stats__value {
+        font-size: 1.836rem !important;
     }
     div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stMarkdownContainer"]:has(.cspe-net-stats) p,
     div[data-testid="column"]:has(#cspe-right-settings-anchor) [data-testid="stMarkdownContainer"]:has(.cspe-rail-title) p,
@@ -638,147 +1500,23 @@ st.markdown(
     .cspe-left-rail {
         min-height: 100vh;
         width: 100%;
-        background: #12161c;
+        background: var(--cspe-bg-surface);
     }
-    .cspe-orb-slot {
-        display: flex;
-        justify-content: center;
-        align-items: flex-start;
-        padding-top: 1.25vh;
-        width: 100%;
+    /* Bordered containers (e.g. station detail card): match dashboard chrome */
+    [data-testid="stAppViewContainer"] div[data-testid="stVerticalBlockBorderWrapper"] {
+        background: var(--cspe-bg-elevated) !important;
+        border: 1px solid var(--cspe-border) !important;
+        border-radius: var(--cspe-radius) !important;
+        box-shadow: none !important;
     }
-    .cspe-orb-placeholder {
-        position: relative;
-        width: min(200px, 76%);
-        aspect-ratio: 1 / 1;
-        border-radius: 50%;
-        background: #12161c;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        overflow: hidden;
-    }
-    .cspe-orb-placeholder::before,
-    .cspe-orb-placeholder::after,
-    .cspe-orb-placeholder__ring,
-    .cspe-orb-placeholder__ring-2,
-    .cspe-orb-placeholder__network,
-    .cspe-orb-placeholder__node,
-    .cspe-orb-placeholder__line,
-    .cspe-orb-placeholder__core {
-        position: absolute;
-        pointer-events: none;
-    }
-    .cspe-orb-placeholder::before,
-    .cspe-orb-placeholder::after {
-        content: "";
-        inset: 0;
-        border-radius: 50%;
-    }
-    .cspe-orb-placeholder::before {
-        background: none;
-        filter: none;
-    }
-    .cspe-orb-placeholder::after {
-        inset: 6%;
-        border: 1px solid rgba(185, 235, 255, 0.12);
-        box-shadow: inset 0 0 28px rgba(125, 221, 255, 0.04);
-    }
-    .cspe-orb-placeholder__ring {
-        inset: 10%;
-        border-radius: 50%;
-        border: 1px solid rgba(210, 244, 255, 0.16);
-        box-shadow: inset 0 0 25px rgba(129, 230, 255, 0.05);
-    }
-    .cspe-orb-placeholder__ring-2 {
-        inset: 22%;
-        border-radius: 50%;
-        border: 2px solid rgba(96, 208, 255, 0.50);
-        box-shadow:
-            0 0 18px rgba(96, 208, 255, 0.18),
-            inset 0 0 24px rgba(96, 208, 255, 0.12);
-    }
-    .cspe-orb-placeholder__network {
-        inset: 7%;
-        border-radius: 50%;
-        overflow: hidden;
-        opacity: 0.82;
-    }
-    .cspe-orb-placeholder__line {
-        height: 1px;
-        transform-origin: left center;
-        background: linear-gradient(90deg, rgba(143, 235, 255, 0.00), rgba(66, 211, 255, 0.46), rgba(143, 235, 255, 0.00));
-        box-shadow: 0 0 8px rgba(66, 211, 255, 0.16);
-    }
-    .cspe-orb-placeholder__line--1 {
-        top: 26%;
-        left: 18%;
-        width: 54%;
-        transform: rotate(28deg);
-    }
-    .cspe-orb-placeholder__line--2 {
-        top: 56%;
-        left: 14%;
-        width: 60%;
-        transform: rotate(-34deg);
-    }
-    .cspe-orb-placeholder__line--3 {
-        top: 48%;
-        left: 30%;
-        width: 34%;
-        transform: rotate(74deg);
-    }
-    .cspe-orb-placeholder__line--4 {
-        top: 32%;
-        left: 40%;
-        width: 26%;
-        transform: rotate(-68deg);
-    }
-    .cspe-orb-placeholder__line--5 {
-        top: 66%;
-        left: 28%;
-        width: 38%;
-        transform: rotate(18deg);
-    }
-    .cspe-orb-placeholder__node {
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        background: #76ddff;
-        box-shadow: 0 0 10px rgba(118, 221, 255, 0.55);
-    }
-    .cspe-orb-placeholder__node--1 { top: 24%; left: 28%; }
-    .cspe-orb-placeholder__node--2 { top: 34%; left: 62%; }
-    .cspe-orb-placeholder__node--3 { top: 52%; left: 22%; }
-    .cspe-orb-placeholder__node--4 { top: 61%; left: 55%; }
-    .cspe-orb-placeholder__node--5 { top: 43%; left: 46%; }
-    .cspe-orb-placeholder__node--6 { top: 71%; left: 39%; }
-    .cspe-orb-placeholder__node--7 { top: 30%; left: 48%; }
-    .cspe-orb-placeholder__node--8 { top: 57%; left: 70%; }
-    .cspe-orb-placeholder__node--9 { top: 45%; left: 33%; }
-    .cspe-orb-placeholder__node--10 { top: 38%; left: 18%; }
-    .cspe-orb-placeholder__node--11 { top: 68%; left: 62%; }
-    .cspe-orb-placeholder__node--12 { top: 20%; left: 54%; }
-    .cspe-orb-placeholder__node--center {
-        top: 50%;
-        left: 50%;
-        width: 9px;
-        height: 9px;
-        transform: translate(-50%, -50%);
-        background: #9ce9ff;
-        box-shadow: 0 0 16px rgba(156, 233, 255, 0.75);
-    }
-    .cspe-orb-placeholder__core {
-        inset: 33%;
-        border-radius: 50%;
-        border: 1px solid rgba(202, 245, 255, 0.18);
-        box-shadow:
-            inset 0 0 26px rgba(81, 203, 255, 0.08),
-            0 0 22px rgba(81, 203, 255, 0.08);
-    }
-    iframe[title="st.iframe"] {
+    /* Map only: neural orb uses components.html iframe too — do not force 100vh there. */
+    div[data-testid="stVerticalBlock"]:has(#map-zone-anchor) iframe[title="st.iframe"] {
         border: none !important;
         border-radius: 0 !important;
         display: block !important;
         height: 100vh !important;
+        position: relative !important;
+        z-index: 0 !important;
     }
     div[data-baseweb="popover"] {
         z-index: 100010 !important;
@@ -789,8 +1527,6 @@ st.markdown(
 )
 
 bundle = load_bundle(PROJECT_ROOT, BUNDLE_PATH, STOP_POPUP_INDEX_PATH)
-pos_all = bundle["pos_all"]
-pos = pos_all
 graphs = bundle["graphs"]
 graphs_lcc = bundle["graphs_lcc"]
 
@@ -804,87 +1540,84 @@ def _fmt(opt):
     return f"{name}  |  {opt['stop_id']}"
 
 
-# Sentinel option when multiple IDFM rows match the same search string.
-_ROUTE_DROPDOWN_PLACEHOLDER = {"stop_id": "__route_pick__", "stop_name": "Pick line…", "line": None}
-
-
-def _route_is_pick_placeholder(opt) -> bool:
-    return bool(opt) and opt.get("stop_id") == "__route_pick__"
-
-
 def _route_is_real_stop(opt) -> bool:
-    return bool(opt) and not _route_is_pick_placeholder(opt)
-
-
-def _route_dropdown_label(opt) -> str:
-    if _route_is_pick_placeholder(opt):
-        return "Pick line…"
-    return _fmt(opt)
-
-
-def _route_choice_equal(a, b) -> bool:
-    if not a or not b:
-        return False
-    return a.get("stop_id") == b.get("stop_id") and a.get("line") == b.get("line")
-
-
-def _route_choice_in_matches(choice, matches: list) -> bool:
-    if not choice or not matches:
-        return False
-    return any(_route_choice_equal(choice, m) for m in matches)
-
-
-def _route_index_for_choice(matches: list, choice) -> int:
-    if not matches:
-        return 0
-    if not choice:
-        return 0
-    for i, m in enumerate(matches):
-        if _route_choice_equal(choice, m):
-            return i
-    return 0
-
-
-def _sync_start_bar_from_pick() -> None:
-    ch = st.session_state.get("controls_start_choice")
-    if _route_is_real_stop(ch):
-        st.session_state["controls_start_q"] = _fmt(ch)
-
-
-def _sync_end_bar_from_pick() -> None:
-    ch = st.session_state.get("controls_end_choice")
-    if _route_is_real_stop(ch):
-        st.session_state["controls_end_q"] = _fmt(ch)
-
-
-def _route_prune_or_reset_pick(
-    matches: list,
-    key: str,
-) -> None:
-    ch = st.session_state.get(key)
-    if ch is None:
-        return
-    if _route_is_pick_placeholder(ch):
-        if len(matches) <= 1:
-            st.session_state.pop(key, None)
-        return
-    if not _route_choice_in_matches(ch, matches):
-        st.session_state.pop(key, None)
+    return bool(opt) and isinstance(opt, dict) and bool(str(opt.get("stop_id", "")).strip())
 
 
 def _route_bar_compute_ready() -> bool:
-    sq = (st.session_state.get("controls_start_q") or "").strip()
-    eq = (st.session_state.get("controls_end_q") or "").strip()
-    if not sq or not eq:
-        return False
     return _route_is_real_stop(st.session_state.get("controls_start_choice")) and _route_is_real_stop(
         st.session_state.get("controls_end_choice")
     )
 
 
-viz_mode_options = ["Geographic Mapbox", "Abstract 2D graph", "3D network"]
+@st.fragment
+def _route_bar_fragment(g, graph_mode: str) -> None:
+    """Debounced live search (streamlit-searchbox); fragment reruns keep the map iframe stable."""
+
+    def _search_opts(term: str):
+        t = (term or "").strip()
+        if not t:
+            return []
+        matches = search_stops_autocomplete(g, t, limit=40, mode=graph_mode)
+        return [(_fmt(m), m) for m in matches]
+
+    rb_main = st.columns([4.2, 4.2, 1.35, 1.35])
+    with rb_main[0]:
+        st.markdown(
+            '<div id="route-bar-portal-root" aria-hidden="true" '
+            'style="height:0;margin:0;padding:0;line-height:0;font-size:0;overflow:hidden;"></div>',
+            unsafe_allow_html=True,
+        )
+        s_pick = st_searchbox(
+            _search_opts,
+            placeholder="Type to search start…",
+            label=None,
+            key="route_sb_s",
+            rerun_on_update=True,
+            rerun_scope="fragment",
+            debounce=100,
+            min_execution_time=0,
+            clear_on_submit=False,
+            edit_after_submit="option",
+        )
+    with rb_main[1]:
+        e_pick = st_searchbox(
+            _search_opts,
+            placeholder="Type to search end…",
+            label=None,
+            key="route_sb_e",
+            rerun_on_update=True,
+            rerun_scope="fragment",
+            debounce=100,
+            min_execution_time=0,
+            clear_on_submit=False,
+            edit_after_submit="option",
+        )
+
+    st.session_state["controls_start_choice"] = s_pick
+    st.session_state["controls_end_choice"] = e_pick
+    st.session_state["controls_start_q"] = _fmt(s_pick) if _route_is_real_stop(s_pick) else ""
+    st.session_state["controls_end_q"] = _fmt(e_pick) if _route_is_real_stop(e_pick) else ""
+
+    with rb_main[2]:
+        if st.button(
+            "Compute",
+            type="primary",
+            disabled=not _route_bar_compute_ready(),
+            use_container_width=True,
+            key="controls_compute_path",
+        ):
+            st.session_state["_route_bar_action"] = "compute"
+            st.rerun()
+    with rb_main[3]:
+        if st.button("Clear", use_container_width=True, key="controls_clear_path"):
+            st.session_state["_route_bar_action"] = "clear"
+            st.rerun()
+
+
+viz_mode_options = ["Geographic Mapbox", "3D network"]
 mode_options = ["all", "metro", "rail", "tram", "bus", "other"]
-OVERLAY_VIZ_LABELS = ["Geographic", "2D graph", "3D network"]
+OVERLAY_VIZ_LABELS = ["Geographic", "3D network"]
 OVERLAY_MODE_CHOICES: list[tuple[str, str]] = [
     ("all", "All"),
     ("metro", "Metro"),
@@ -902,6 +1635,121 @@ POI_CATEGORY_CHOICES: list[tuple[str, str]] = [
     ("leisure", "Leisure"),
 ]
 
+# Side / middle column ratios for inset button groups (gutters = horizontal breathing room from panel edges).
+_RAIL_COMPACT_STRIP_GUTTER = 2
+_RAIL_COMPACT_STRIP_BODY = 12
+
+
+@contextmanager
+def _rail_compact_button_strip():
+    """Inset strip: empty gutter columns + middle body so controls do not touch panel edges."""
+    pl, mid, pr = st.columns(
+        [_RAIL_COMPACT_STRIP_GUTTER, _RAIL_COMPACT_STRIP_BODY, _RAIL_COMPACT_STRIP_GUTTER],
+        gap="small",
+    )
+    with pl:
+        st.empty()
+    with pr:
+        st.empty()
+    with mid:
+        yield
+
+
+def _rail_compact_row_anchor() -> None:
+    st.markdown(
+        '<div class="cspe-rail-compact-strip-anchor" aria-hidden="true" '
+        'style="height:0;margin:0;padding:0;line-height:0;font-size:0;overflow:hidden"></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _rail_category_chip_row_anchor() -> None:
+    st.markdown(
+        '<div class="cspe-rail-category-chip-row" aria-hidden="true" '
+        'style="height:0;margin:0;padding:0;line-height:0;font-size:0;overflow:hidden"></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_poi_numeric_row(
+    label: str,
+    state_key: str,
+    *,
+    min_value: int,
+    max_value: int,
+    step: int,
+    current: int,
+) -> None:
+    """Single-line POI control: label left, compact number field right (Streamlit commits on Enter/blur)."""
+    lc, rc = st.columns([1, 0.36], gap="small")
+    with lc:
+        st.markdown(
+            f'<p class="cspe-poi-inline-label">{label}</p>',
+            unsafe_allow_html=True,
+        )
+    with rc:
+        st.number_input(
+            label,
+            min_value=min_value,
+            max_value=max_value,
+            value=int(current),
+            step=step,
+            key=state_key,
+            label_visibility="collapsed",
+            format="%d",
+        )
+
+
+def _render_graph_settings_toggle_row(viz_mode: str, *, has_path: bool) -> None:
+    """Graph toggles: inset strip; equal-width / equal-height control row via compact-strip CSS."""
+    use_lcc = bool(st.session_state.get("controls_use_lcc", True))
+    if viz_mode == "Geographic Mapbox":
+        transfers_key = "controls_show_transfers_map"
+        debug_key = "controls_show_path_match_debug"
+    else:
+        transfers_key = "controls_show_transfers_network_3d"
+        debug_key = "controls_show_path_match_debug_3d"
+    transfers_on = bool(st.session_state.get(transfers_key, False))
+    debug_on = bool(st.session_state.get(debug_key, False))
+
+    with _rail_compact_button_strip():
+        _rail_compact_row_anchor()
+        gcols = st.columns([1, 1, 1], gap="small")
+        with gcols[0]:
+            if st.button(
+                "LCC",
+                key="graph_toggle_lcc",
+                use_container_width=True,
+                type="primary" if use_lcc else "secondary",
+                help="Largest connected component",
+            ):
+                st.session_state["controls_use_lcc"] = not use_lcc
+                st.rerun()
+
+        with gcols[1]:
+            if st.button(
+                "Transfers",
+                key=f"graph_toggle_{transfers_key}",
+                use_container_width=True,
+                type="primary" if transfers_on else "secondary",
+                help="Show transfer edges",
+            ):
+                st.session_state[transfers_key] = not transfers_on
+                st.rerun()
+
+        with gcols[2]:
+            if st.button(
+                "Geom",
+                key=f"graph_toggle_{debug_key}",
+                use_container_width=True,
+                type="primary" if debug_on else "secondary",
+                disabled=not has_path,
+                help="Show path geometry debug (needs a computed route)",
+            ):
+                if has_path:
+                    st.session_state[debug_key] = not debug_on
+                    st.rerun()
+
 
 def _render_poi_category_rail_buttons(state_key: str) -> None:
     valid = {v for v, _ in POI_CATEGORY_CHOICES}
@@ -910,19 +1758,19 @@ def _render_poi_category_rail_buttons(state_key: str) -> None:
         cur = "All"
         st.session_state[state_key] = cur
     st.markdown('<div class="cspe-rail-subtitle">Category</div>', unsafe_allow_html=True)
-    p1 = st.columns(3, gap="small")
-    p2 = st.columns(3, gap="small")
-    for idx, (val, label) in enumerate(POI_CATEGORY_CHOICES):
-        row = p1 if idx < 3 else p2
-        with row[idx % 3]:
-            if st.button(
-                label,
-                key=f"{state_key}__btn__{val}",
-                use_container_width=True,
-                type="primary" if cur == val else "secondary",
-            ):
-                st.session_state[state_key] = val
-                st.rerun()
+    with _rail_compact_button_strip():
+        _rail_category_chip_row_anchor()
+        cat_cols = st.columns([1] * len(POI_CATEGORY_CHOICES), gap="small")
+        for i, (val, label) in enumerate(POI_CATEGORY_CHOICES):
+            with cat_cols[i]:
+                if st.button(
+                    label,
+                    key=f"{state_key}__btn__{val}",
+                    use_container_width=False,
+                    type="primary" if cur == val else "secondary",
+                ):
+                    st.session_state[state_key] = val
+                    st.rerun()
 
 
 def _render_map_controls_overlay() -> None:
@@ -932,7 +1780,7 @@ def _render_map_controls_overlay() -> None:
         st.session_state["controls_viz_mode"] = cur_viz
 
     st.markdown('<p class="cspe-overlay-title">Visualization</p>', unsafe_allow_html=True)
-    vcols = st.columns(3, gap="small")
+    vcols = st.columns(2, gap="small")
     for i, opt in enumerate(viz_mode_options):
         with vcols[i]:
             if st.button(
@@ -1000,44 +1848,13 @@ log_event(
     poi_limit=poi_limit,
 )
 
-left_rail_col, center_col, right_col = st.columns([1, 21, 7], gap="large")
+left_rail_col, center_col, right_col = st.columns([6, 62, 32], gap="large")
 
 with left_rail_col:
     st.markdown('<div class="cspe-left-rail"></div>', unsafe_allow_html=True)
 
 with right_col:
-    st.markdown(
-        """
-        <div class="cspe-orb-slot cspe-orb-slot--bleed">
-          <div class="cspe-orb-placeholder">
-            <div class="cspe-orb-placeholder__ring"></div>
-            <div class="cspe-orb-placeholder__ring-2"></div>
-            <div class="cspe-orb-placeholder__network">
-              <div class="cspe-orb-placeholder__line cspe-orb-placeholder__line--1"></div>
-              <div class="cspe-orb-placeholder__line cspe-orb-placeholder__line--2"></div>
-              <div class="cspe-orb-placeholder__line cspe-orb-placeholder__line--3"></div>
-              <div class="cspe-orb-placeholder__line cspe-orb-placeholder__line--4"></div>
-              <div class="cspe-orb-placeholder__line cspe-orb-placeholder__line--5"></div>
-              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--1"></div>
-              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--2"></div>
-              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--3"></div>
-              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--4"></div>
-              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--5"></div>
-              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--6"></div>
-              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--7"></div>
-              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--8"></div>
-              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--9"></div>
-              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--10"></div>
-              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--11"></div>
-              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--12"></div>
-              <div class="cspe-orb-placeholder__node cspe-orb-placeholder__node--center"></div>
-            </div>
-            <div class="cspe-orb-placeholder__core"></div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    components.html(_NEURAL_ORB_HTML, height=360, scrolling=False)
     _cspe_rgl, _cspe_rail_main, _cspe_rgr = st.columns([0.656, 9, 0.656], gap="small")
     with _cspe_rgl:
         st.empty()
@@ -1050,7 +1867,7 @@ with right_col:
         )
 
         st.markdown('<div class="cspe-rail-title cspe-rail-title--tight">[ GRAPH ]</div>', unsafe_allow_html=True)
-        use_lcc = st.checkbox("Largest connected component", value=use_lcc, key="controls_use_lcc")
+        _render_graph_settings_toggle_row(viz_mode, has_path=bool(current_path))
 
         _nn = G.number_of_nodes()
         _ne = G.number_of_edges()
@@ -1078,42 +1895,50 @@ with right_col:
                 name = hub["stop_name"] if hub["stop_name"] else hub["stop_id"]
                 st.write(f"{name} — degree={hub['degree']}")
 
-        st.markdown(
-            '<div class="cspe-rail-title cspe-rail-title--spaced">[ VIEW OPTIONS ]</div>',
-            unsafe_allow_html=True,
-        )
-        if viz_mode == "Abstract 2D graph":
-            st.checkbox("Zoom to route", value=True, key="controls_zoom_to_path")
-        elif viz_mode == "Geographic Mapbox":
-            st.checkbox("Show transfer edges", value=show_transfers_map, key="controls_show_transfers_map")
-            st.checkbox(
-                "Show path geometry debug",
-                value=show_path_match_debug,
-                disabled=not current_path,
-                key="controls_show_path_match_debug",
-            )
+        if viz_mode == "Geographic Mapbox":
             st.markdown(
-                '<div class="cspe-rail-title cspe-rail-title--tight">[ NEARBY POIS ]</div>',
+                '<div class="cspe-rail-title cspe-rail-title--spaced">[ NEARBY POIS ]</div>',
                 unsafe_allow_html=True,
             )
-            st.slider("POI radius (m)", min_value=100, max_value=1000, value=poi_radius_m, step=50, key="controls_poi_radius_m")
-            st.slider("POIs shown per station", min_value=5, max_value=200, value=poi_limit, step=5, key="controls_poi_limit")
+            _render_poi_numeric_row(
+                "POI radius (m)",
+                "controls_poi_radius_m",
+                min_value=100,
+                max_value=1000,
+                step=50,
+                current=poi_radius_m,
+            )
+            _render_poi_numeric_row(
+                "POIs shown / station",
+                "controls_poi_limit",
+                min_value=5,
+                max_value=200,
+                step=5,
+                current=poi_limit,
+            )
             st.caption("Dense areas can fill the result cap before reaching the full radius.")
             _render_poi_category_rail_buttons("controls_poi_category_key")
         else:
-            st.checkbox("Show transfer edges", value=show_transfers_network_3d, key="controls_show_transfers_network_3d")
-            st.checkbox(
-                "Show path geometry debug",
-                value=show_path_match_debug_3d,
-                disabled=not current_path,
-                key="controls_show_path_match_debug_3d",
-            )
             st.markdown(
-                '<div class="cspe-rail-title cspe-rail-title--tight">[ NEARBY POIS ]</div>',
+                '<div class="cspe-rail-title cspe-rail-title--spaced">[ NEARBY POIS ]</div>',
                 unsafe_allow_html=True,
             )
-            st.slider("POI radius (m)", min_value=100, max_value=1000, value=poi_radius_m_3d, step=50, key="controls_poi_radius_m_3d")
-            st.slider("POIs shown per station", min_value=5, max_value=200, value=poi_limit_3d, step=5, key="controls_poi_limit_3d")
+            _render_poi_numeric_row(
+                "POI radius (m)",
+                "controls_poi_radius_m_3d",
+                min_value=100,
+                max_value=1000,
+                step=50,
+                current=poi_radius_m_3d,
+            )
+            _render_poi_numeric_row(
+                "POIs shown / station",
+                "controls_poi_limit_3d",
+                min_value=5,
+                max_value=200,
+                step=5,
+                current=poi_limit_3d,
+            )
             st.caption("Dense areas can fill the result cap before reaching the full radius.")
             _render_poi_category_rail_buttons("controls_poi_category_key_3d")
 
@@ -1154,20 +1979,14 @@ with right_col:
 
 with center_col:
     st.markdown('<div id="map-zone-anchor"></div>', unsafe_allow_html=True)
-    if viz_mode == "Abstract 2D graph":
-        log_event(LOGGER, "render_2d_graph_start", mode=mode, use_lcc=use_lcc, node_count=G.number_of_nodes(), edge_count=G.number_of_edges())
-        fig = plot_graph_2d(
-            G,
-            pos,
-            title="",
-            path=current_path,
-            zoom_to_path=True,
-        )
-        st.pyplot(fig, use_container_width=True)
-    elif viz_mode == "Geographic Mapbox":
+    if viz_mode == "Geographic Mapbox":
         token, _token_env = get_mapbox_token()
         if token is None:
-            st.warning("Mapbox mode needs a token in `MAPBOX_TOKEN`, `MAPBOX_API_KEY`, or `MAPBOX_ACCESS_TOKEN`.")
+            st.warning(
+                "Mapbox mode needs a token: set `MAPBOX_ACCESS_TOKEN_INLINE` in `app/app.py`, "
+                "or `MAPBOX_TOKEN` / `MAPBOX_API_KEY` / `MAPBOX_ACCESS_TOKEN` in the environment "
+                "or Streamlit Cloud Secrets."
+            )
             log_event(LOGGER, "render_mapbox_skipped_missing_token", viz_mode=viz_mode, mode=mode)
         else:
             line_geometries = load_line_geometries_cached(NETWORK_MAPS_DIR)
@@ -1191,7 +2010,7 @@ with center_col:
                 mode=mode,
                 path=current_path,
                 show_transfers=show_transfers_map,
-                title=f"Mode: {mode} {'(LCC)' if use_lcc else ''}",
+            title=f"Mode: {mode} {'(LCC)' if use_lcc else ''}",
                 basemap_style=DEFAULT_MAPBOX_STYLE,
                 line_geometries=line_geometries,
                 render_graphs_by_mode=render_graphs or None,
@@ -1207,7 +2026,11 @@ with center_col:
     else:
         token, _token_env = get_mapbox_token()
         if token is None:
-            st.warning("Mapbox mode needs a token in `MAPBOX_TOKEN`, `MAPBOX_API_KEY`, or `MAPBOX_ACCESS_TOKEN`.")
+            st.warning(
+                "Mapbox mode needs a token: set `MAPBOX_ACCESS_TOKEN_INLINE` in `app/app.py`, "
+                "or `MAPBOX_TOKEN` / `MAPBOX_API_KEY` / `MAPBOX_ACCESS_TOKEN` in the environment "
+                "or Streamlit Cloud Secrets."
+            )
             log_event(LOGGER, "render_3d_skipped_missing_token", viz_mode=viz_mode, mode=mode)
         else:
             line_geometries = load_line_geometries_cached(NETWORK_MAPS_DIR)
@@ -1236,9 +2059,9 @@ with center_col:
                 line_geometries=line_geometries,
                 render_graphs_by_mode=render_graphs or None,
                 poi_lookup=poi_lookup,
-                poi_radius_m=float(poi_radius_m),
-                poi_limit=int(poi_limit),
-                poi_category_key=None if poi_category_key == "All" else poi_category_key,
+                poi_radius_m=float(poi_radius_m_3d),
+                poi_limit=int(poi_limit_3d),
+                poi_category_key=None if poi_category_key_3d == "All" else poi_category_key_3d,
                 pitched_view=True,
                 show_3d_buildings=True,
                 height_px=1100,
@@ -1251,116 +2074,10 @@ with center_col:
         _render_map_controls_overlay()
         st.markdown('<div id="controls-overlay-end"></div>', unsafe_allow_html=True)
 
-    compute_clicked = False
-    clear_clicked = False
-
     route_bar_host = st.container()
     with route_bar_host:
         st.markdown('<div id="route-bar-anchor"></div>', unsafe_allow_html=True)
-
-        sq0 = (st.session_state.get("controls_start_q") or "").strip()
-        eq0 = (st.session_state.get("controls_end_q") or "").strip()
-        start_matches = search_stops(G, sq0, limit=40, mode=mode) if sq0 else []
-        end_matches = search_stops(G, eq0, limit=40, mode=mode) if eq0 else []
-
-        _route_prune_or_reset_pick(start_matches, "controls_start_choice")
-        _route_prune_or_reset_pick(end_matches, "controls_end_choice")
-
-        if len(start_matches) == 1:
-            only_s = start_matches[0]
-            sch = st.session_state.get("controls_start_choice")
-            if sch is None or not _route_choice_equal(sch, only_s):
-                st.session_state["controls_start_choice"] = only_s
-                st.session_state["controls_start_q"] = _fmt(only_s)
-        if len(end_matches) == 1:
-            only_e = end_matches[0]
-            ech = st.session_state.get("controls_end_choice")
-            if ech is None or not _route_choice_equal(ech, only_e):
-                st.session_state["controls_end_choice"] = only_e
-                st.session_state["controls_end_q"] = _fmt(only_e)
-
-        rb_main = st.columns([4.2, 4.2, 1.35, 1.35])
-        with rb_main[0]:
-            s_row = st.columns([2.65, 1.55], gap="small")
-            with s_row[0]:
-                st.text_input(
-                    "Start stop",
-                    placeholder="Start stop",
-                    key="controls_start_q",
-                    label_visibility="collapsed",
-                )
-            with s_row[1]:
-                if sq0 and start_matches:
-                    sc_cur = st.session_state.get("controls_start_choice")
-                    if len(start_matches) == 1:
-                        s_opts = start_matches
-                        ix_s = 0
-                    else:
-                        s_opts = [_ROUTE_DROPDOWN_PLACEHOLDER] + start_matches
-                        if _route_is_pick_placeholder(sc_cur) or sc_cur is None:
-                            ix_s = 0
-                        elif _route_choice_in_matches(sc_cur, start_matches):
-                            ix_s = 1 + _route_index_for_choice(start_matches, sc_cur)
-                        else:
-                            ix_s = 0
-                    st.selectbox(
-                        "Start IDFM",
-                        options=s_opts,
-                        format_func=_route_dropdown_label,
-                        index=min(ix_s, len(s_opts) - 1),
-                        key="controls_start_choice",
-                        label_visibility="collapsed",
-                        on_change=_sync_start_bar_from_pick,
-                    )
-                elif sq0:
-                    st.caption("No match")
-        with rb_main[1]:
-            e_row = st.columns([2.65, 1.55], gap="small")
-            with e_row[0]:
-                st.text_input(
-                    "End stop",
-                    placeholder="End stop",
-                    key="controls_end_q",
-                    label_visibility="collapsed",
-                )
-            with e_row[1]:
-                if eq0 and end_matches:
-                    ec_cur = st.session_state.get("controls_end_choice")
-                    if len(end_matches) == 1:
-                        e_opts = end_matches
-                        ix_e = 0
-                    else:
-                        e_opts = [_ROUTE_DROPDOWN_PLACEHOLDER] + end_matches
-                        if _route_is_pick_placeholder(ec_cur) or ec_cur is None:
-                            ix_e = 0
-                        elif _route_choice_in_matches(ec_cur, end_matches):
-                            ix_e = 1 + _route_index_for_choice(end_matches, ec_cur)
-                        else:
-                            ix_e = 0
-                    st.selectbox(
-                        "End IDFM",
-                        options=e_opts,
-                        format_func=_route_dropdown_label,
-                        index=min(ix_e, len(e_opts) - 1),
-                        key="controls_end_choice",
-                        label_visibility="collapsed",
-                        on_change=_sync_end_bar_from_pick,
-                    )
-                elif eq0:
-                    st.caption("No match")
-        with rb_main[2]:
-            compute_clicked = st.button(
-                "Compute",
-                type="primary",
-                disabled=not _route_bar_compute_ready(),
-                use_container_width=True,
-                key="controls_compute_path",
-            )
-        with rb_main[3]:
-            clear_clicked = st.button("Clear", use_container_width=True, key="controls_clear_path")
-
-    start_choice = st.session_state.get("controls_start_choice")
-    end_choice = st.session_state.get("controls_end_choice")
+        _route_bar_fragment(G, mode)
 
     st.html(
         """
@@ -1396,25 +2113,48 @@ with center_col:
             }
             host.id = 'controls-portal';
             host.style.margin = '0';
-            host.style.overflow = 'hidden';
+            host.style.overflow = 'visible';
             return true;
           };
 
           const attachRouteBarHost = () => {
-            const anchor = document.getElementById('route-bar-anchor');
-            if (!anchor) {
-              return false;
-            }
-            let host = anchor.parentElement;
-            while (host) {
-              const inputs = host.querySelectorAll('[data-testid="stTextInput"]');
-              if (inputs.length >= 2) {
-                break;
-              }
-              host = host.parentElement;
-              if (!host || host.tagName === 'BODY') {
+            const rowMarker = document.getElementById('route-bar-portal-root');
+            let host = rowMarker ? rowMarker.closest('[data-testid="stHorizontalBlock"]') : null;
+            if (!host) {
+              const anchor = document.getElementById('route-bar-anchor');
+              if (!anchor) {
                 return false;
               }
+              let h = anchor.parentElement;
+              while (h) {
+                const inputs = h.querySelectorAll('[data-testid="stTextInput"]');
+                if (inputs.length >= 2) {
+                  host = h;
+                  break;
+                }
+                h = h.parentElement;
+                if (!h || h.tagName === 'BODY') {
+                  return false;
+                }
+              }
+              const tis = host.querySelectorAll('[data-testid="stTextInput"]');
+              if (tis.length >= 2) {
+                let a = tis[0];
+                while (a && host.contains(a)) {
+                  if (
+                    a.getAttribute &&
+                    a.getAttribute('data-testid') === 'stHorizontalBlock' &&
+                    a.contains(tis[1])
+                  ) {
+                    host = a;
+                    break;
+                  }
+                  a = a.parentElement;
+                }
+              }
+            }
+            if (!host) {
+              return false;
             }
             const stale = document.getElementById('route-bar-portal');
             if (stale && stale !== host) {
@@ -1423,7 +2163,89 @@ with center_col:
             host.id = 'route-bar-portal';
             host.style.margin = '0';
             host.style.overflow = 'visible';
+            host.style.setProperty('z-index', '80', 'important');
             return true;
+          };
+
+          /* streamlit-searchbox iframe height is driven by React; that grows the route row. Pin columns + use a tall
+             absolutely positioned iframe so the control stays anchored and the menu opens upward inside the iframe. */
+          const applyRouteSearchOverlayLayout = () => {
+            const portal = document.getElementById('route-bar-portal');
+            if (!portal) {
+              return;
+            }
+            portal.style.setProperty('overflow', 'visible', 'important');
+            portal.style.setProperty('z-index', '80', 'important');
+            portal.querySelectorAll('iframe[title="streamlit_searchbox.searchbox"]').forEach((ifr) => {
+              const col = ifr.closest('[data-testid="column"]');
+              if (col) {
+                col.style.setProperty('position', 'relative', 'important');
+                col.style.setProperty('min-height', '2.5rem', 'important');
+                col.style.setProperty('height', '2.5rem', 'important');
+                col.style.setProperty('max-height', '2.5rem', 'important');
+                col.style.setProperty('overflow', 'visible', 'important');
+              }
+              let p = ifr.parentElement;
+              while (p && p !== portal) {
+                p.style.setProperty('overflow', 'visible', 'important');
+                p = p.parentElement;
+              }
+              ifr.style.setProperty('position', 'absolute', 'important');
+              ifr.style.setProperty('left', '0', 'important');
+              ifr.style.setProperty('right', '0', 'important');
+              ifr.style.setProperty('bottom', '0', 'important');
+              ifr.style.setProperty('width', '100%', 'important');
+              ifr.style.setProperty('height', '300px', 'important');
+              ifr.style.setProperty('min-height', '300px', 'important');
+              ifr.style.setProperty('max-height', '300px', 'important');
+              ifr.style.setProperty('z-index', '90', 'important');
+              ifr.style.setProperty('margin', '0', 'important');
+              try {
+                const doc = ifr.contentDocument;
+                if (!doc || !doc.head) {
+                  return;
+                }
+                let st = doc.getElementById('cspe-route-search-inner');
+                if (!st) {
+                  st = doc.createElement('style');
+                  st.id = 'cspe-route-search-inner';
+                  st.textContent = `
+                    html, body {
+                      height: 100% !important;
+                      margin: 0 !important;
+                      overflow: visible !important;
+                      background: transparent !important;
+                    }
+                    #root {
+                      height: 100% !important;
+                      min-height: 100% !important;
+                      display: flex !important;
+                      flex-direction: column !important;
+                      justify-content: flex-end !important;
+                      align-items: stretch !important;
+                      overflow: visible !important;
+                      box-sizing: border-box !important;
+                    }
+                    #root > div {
+                      width: 100% !important;
+                      max-width: 100% !important;
+                    }
+                    div[class*="menu" i]:not([class*="MenuList" i]) {
+                      top: auto !important;
+                      bottom: 100% !important;
+                      margin-bottom: 6px !important;
+                      margin-top: 0 !important;
+                    }
+                    div[class*="MenuList" i] {
+                      max-height: min(42vh, 220px) !important;
+                    }
+                  `;
+                  doc.head.appendChild(st);
+                }
+              } catch (e) {
+                /* not same-origin yet */
+              }
+            });
           };
 
           const attachRightRailInset = () => {
@@ -1461,14 +2283,34 @@ with center_col:
             return false;
           };
 
+          const ensureMapStackRoot = () => {
+            const mapAnchor = document.getElementById('map-zone-anchor');
+            if (!mapAnchor) {
+              return false;
+            }
+            const root = mapAnchor.closest('div[data-testid="stVerticalBlock"]');
+            if (!root) {
+              return false;
+            }
+            root.classList.add('cspe-map-stack-root');
+            root.style.setProperty('position', 'relative', 'important');
+            root.style.setProperty('min-height', '100vh', 'important');
+            root.style.setProperty('height', '100vh', 'important');
+            root.style.setProperty('overflow', 'visible', 'important');
+            return true;
+          };
+
           const tryAttachOverlays = () => {
+            ensureMapStackRoot();
             attachOverlayHost();
             attachRouteBarHost();
             attachRightRailInset();
+            applyRouteSearchOverlayLayout();
           };
           tryAttachOverlays();
           requestAnimationFrame(tryAttachOverlays);
           setTimeout(tryAttachOverlays, 120);
+          setInterval(applyRouteSearchOverlayLayout, 350);
         })();
         </script>
         """,
@@ -1476,56 +2318,66 @@ with center_col:
     )
 
 with center_col:
-    if clear_clicked:
+    _route_bar_action = st.session_state.pop("_route_bar_action", None)
+    if _route_bar_action == "clear":
         log_event(LOGGER, "route_cleared")
+        for k in ("route_sb_s", "route_sb_e"):
+            st.session_state.pop(k, None)
+        st.session_state["controls_start_choice"] = None
+        st.session_state["controls_end_choice"] = None
+        st.session_state["controls_start_q"] = ""
+        st.session_state["controls_end_q"] = ""
         st.session_state["last_path"] = None
         st.session_state["last_route_result"] = None
         st.session_state["last_route_error"] = None
         st.rerun()
 
-    if compute_clicked and start_choice and end_choice:
-        a = start_choice["stop_id"]
-        b = end_choice["stop_id"]
-        log_event(LOGGER, "route_compute_clicked", start_stop_id=a, end_stop_id=b, mode=mode, use_lcc=use_lcc)
-        a_info = component_info(G, a)
-        b_info = component_info(G, b)
-        res = shortest_path(G, a, b)
-        if res["ok"]:
-            log_event(
-                LOGGER,
-                "route_compute_success",
-                start_stop_id=a,
-                end_stop_id=b,
-                path_length=len(res.get("path") or []),
-                distance_m=res.get("distance_m"),
-                time_s=res.get("time_s"),
-                transfers=res.get("transfers"),
-            )
-            st.session_state["last_path"] = res["path"]
-            st.session_state["last_route_result"] = res
-            st.session_state["last_route_error"] = None
-        else:
-            details: list[str] = []
-            message = "Path computation failed."
-            if res["reason"] == "not_connected":
-                message = "No path: the two stops are not connected in this graph."
-                details = [
-                    f"Start component size: {a_info.get('component_size', 0)}",
-                    f"End component size: {b_info.get('component_size', 0)}",
-                ]
-            elif res["reason"] == "start_not_found":
-                message = "Start stop not found in the current graph."
-            elif res["reason"] == "end_not_found":
-                message = "End stop not found in the current graph."
-            log_event(
-                LOGGER,
-                "route_compute_failed",
-                start_stop_id=a,
-                end_stop_id=b,
-                reason=res.get("reason"),
-                start_component_size=a_info.get("component_size", 0),
-                end_component_size=b_info.get("component_size", 0),
-            )
-            st.session_state["last_route_error"] = {"message": message, "details": details}
-            st.session_state["last_route_result"] = None
-        st.rerun()
+    if _route_bar_action == "compute":
+        start_choice = st.session_state.get("controls_start_choice")
+        end_choice = st.session_state.get("controls_end_choice")
+        if start_choice and end_choice:
+            a = start_choice["stop_id"]
+            b = end_choice["stop_id"]
+            log_event(LOGGER, "route_compute_clicked", start_stop_id=a, end_stop_id=b, mode=mode, use_lcc=use_lcc)
+            a_info = component_info(G, a)
+            b_info = component_info(G, b)
+            res = shortest_path(G, a, b)
+            if res["ok"]:
+                log_event(
+                    LOGGER,
+                    "route_compute_success",
+                    start_stop_id=a,
+                    end_stop_id=b,
+                    path_length=len(res.get("path") or []),
+                    distance_m=res.get("distance_m"),
+                    time_s=res.get("time_s"),
+                    transfers=res.get("transfers"),
+                )
+                st.session_state["last_path"] = res["path"]
+                st.session_state["last_route_result"] = res
+                st.session_state["last_route_error"] = None
+            else:
+                details: list[str] = []
+                message = "Path computation failed."
+                if res["reason"] == "not_connected":
+                    message = "No path: the two stops are not connected in this graph."
+                    details = [
+                        f"Start component size: {a_info.get('component_size', 0)}",
+                        f"End component size: {b_info.get('component_size', 0)}",
+                    ]
+                elif res["reason"] == "start_not_found":
+                    message = "Start stop not found in the current graph."
+                elif res["reason"] == "end_not_found":
+                    message = "End stop not found in the current graph."
+                log_event(
+                    LOGGER,
+                    "route_compute_failed",
+                    start_stop_id=a,
+                    end_stop_id=b,
+                    reason=res.get("reason"),
+                    start_component_size=a_info.get("component_size", 0),
+                    end_component_size=b_info.get("component_size", 0),
+                )
+                st.session_state["last_route_error"] = {"message": message, "details": details}
+                st.session_state["last_route_result"] = None
+            st.rerun()
