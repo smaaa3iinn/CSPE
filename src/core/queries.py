@@ -11,6 +11,91 @@ def normalize_text(s: str) -> str:
     return s
 
 
+def _stop_name_prefix_match(normalized_name: str, q: str) -> bool:
+    """True if whole name or any whitespace-separated token starts with q."""
+    if not q:
+        return False
+    if normalized_name.startswith(q):
+        return True
+    return any(part.startswith(q) for part in normalized_name.split() if part)
+
+
+def _expand_and_cap_route_results(
+    results: list[dict], *, mode: str | None, limit: int
+) -> list[dict]:
+    """Shared metro/rail/tram line expansion + bus compacting (matches search_stops)."""
+    if mode in {"metro", "rail", "tram"}:
+        expanded = []
+        for r in results:
+            lines = (r.get("_lines") or {}).get(mode, [])
+            lines = list(lines)[:8]
+            if lines:
+                for ln in lines:
+                    expanded.append({"stop_id": r["stop_id"], "stop_name": r["stop_name"], "line": ln})
+            else:
+                expanded.append({"stop_id": r["stop_id"], "stop_name": r["stop_name"], "line": None})
+        results = expanded
+    else:
+        compact = []
+        for r in results:
+            lines_dict = r.get("_lines") or {}
+            summary_parts = []
+            for m in ("metro", "rail", "tram"):
+                if m in lines_dict and lines_dict[m]:
+                    summary_parts.append(",".join(lines_dict[m][:3]))
+            compact.append(
+                {
+                    "stop_id": r["stop_id"],
+                    "stop_name": r["stop_name"],
+                    "line": " | ".join(summary_parts) if summary_parts else None,
+                }
+            )
+        results = compact
+    for r in results:
+        r.pop("_lines", None)
+    return results[:limit]
+
+
+def search_stops_autocomplete(
+    G: nx.Graph, query: str, limit: int = 40, mode: str | None = None, *, max_raw_stops: int = 80
+) -> list[dict]:
+    """
+    Prefix-oriented suggestions for live search (any word in the stop name can match the prefix).
+    Stops scanning after max_raw_stops candidates for performance on large graphs.
+    """
+    q = normalize_text(query)
+    if not q:
+        return []
+
+    results: list[dict] = []
+    for n, attrs in G.nodes(data=True):
+        name = str(attrs.get("stop_name", ""))
+        if not name:
+            continue
+        nn = normalize_text(name)
+        if _stop_name_prefix_match(nn, q):
+            results.append({"stop_id": str(n), "stop_name": name, "_lines": attrs.get("lines")})
+        if len(results) >= max_raw_stops:
+            break
+
+    if not results:
+        for n in G.nodes():
+            nid = normalize_text(str(n))
+            if nid.startswith(q):
+                results.append(
+                    {
+                        "stop_id": str(n),
+                        "stop_name": str(G.nodes[n].get("stop_name", "")),
+                        "_lines": G.nodes[n].get("lines"),
+                    }
+                )
+            if len(results) >= max_raw_stops:
+                break
+
+    results.sort(key=lambda r: normalize_text(r["stop_name"]))
+    return _expand_and_cap_route_results(results, mode=mode, limit=limit)
+
+
 def search_stops(G: nx.Graph, query: str, limit: int = 20, mode: str | None = None):
     q = normalize_text(query)
     if not q:
@@ -28,38 +113,7 @@ def search_stops(G: nx.Graph, query: str, limit: int = 20, mode: str | None = No
             if q in normalize_text(str(n)):
                 results.append({"stop_id": str(n), "stop_name": str(G.nodes[n].get("stop_name", "")), "_lines": G.nodes[n].get("lines")})
 
-    # Expand results by line for metro/rail/tram so the UI can show:
-    #   Gare de Lyon – Line 1 / Line 14 / RER A ...
-    # For bus/all this can explode, so we keep a single entry.
-    if mode in {"metro", "rail", "tram"}:
-        expanded = []
-        for r in results:
-            lines = (r.get("_lines") or {}).get(mode, [])
-            # cap to avoid insane dropdowns
-            lines = list(lines)[:8]
-            if lines:
-                for ln in lines:
-                    expanded.append({"stop_id": r["stop_id"], "stop_name": r["stop_name"], "line": ln})
-            else:
-                expanded.append({"stop_id": r["stop_id"], "stop_name": r["stop_name"], "line": None})
-        results = expanded
-    else:
-        # compact summary if we can
-        compact = []
-        for r in results:
-            lines_dict = r.get("_lines") or {}
-            summary_parts = []
-            for m in ("metro", "rail", "tram"):
-                if m in lines_dict and lines_dict[m]:
-                    summary_parts.append(",".join(lines_dict[m][:3]))
-            compact.append({"stop_id": r["stop_id"], "stop_name": r["stop_name"], "line": " | ".join(summary_parts) if summary_parts else None})
-        results = compact
-
-    # drop helper key
-    for r in results:
-        r.pop("_lines", None)
-
-    return results[:limit]
+    return _expand_and_cap_route_results(results, mode=mode, limit=limit)
 
 
 def same_component(G: nx.Graph, a: str, b: str) -> bool:

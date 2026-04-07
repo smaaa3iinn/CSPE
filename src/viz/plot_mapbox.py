@@ -19,6 +19,22 @@ from src.viz.paris_mask import build_paris_mask_payload
 
 LOGGER = get_debug_logger("cspe.plot_mapbox")
 
+
+def normalize_mapbox_style_url(style: str) -> str:
+    """Mapbox GL accepts mapbox:// URLs. Studio often copies https://api.mapbox.com/styles/v1/user/id?access_token=… — strip the query and normalize."""
+    s = (style or "").strip()
+    if not s:
+        return s
+    lower = s.lower()
+    for prefix in ("https://api.mapbox.com/styles/v1/", "http://api.mapbox.com/styles/v1/"):
+        if lower.startswith(prefix):
+            rest = s[len(prefix) :].split("?")[0].split("#")[0].strip().rstrip("/")
+            if rest and "/" in rest:
+                return f"mapbox://styles/{rest}"
+            break
+    return s
+
+
 MODE_COLORS = {
     "bus": "#2563eb",
     "tram": "#db2777",
@@ -1416,7 +1432,7 @@ def plot_graph_mapbox(
         legend={"orientation": "h", "yanchor": "bottom", "y": 1.01, "xanchor": "left", "x": 0.0},
         mapbox={
             "accesstoken": mapbox_token,
-            "style": "mapbox://styles/mapbox/light-v11",
+            "style": "mapbox://styles/smaaa3iin/cmnkb703u002001sh48945ojt",
             "center": center,
             "zoom": zoom,
         },
@@ -1587,7 +1603,7 @@ def render_mapbox_gl_html(
     path: list[str] | None = None,
     show_transfers: bool = False,
     title: str = "",
-    basemap_style: str = "mapbox://styles/mapbox/light-v11",
+    basemap_style: str = "mapbox://styles/smaaa3iin/cmnkb703u002001sh48945ojt",
     line_geometries: dict[str, Any] | None = None,
     render_graphs_by_mode: dict[str, dict[str, Any]] | None = None,
     poi_lookup: LocalPOILookup | None = None,
@@ -1638,10 +1654,19 @@ def render_mapbox_gl_html(
         if feature is not None:
             transfer_features.append(feature)
 
+    basemap_resolved = normalize_mapbox_style_url(basemap_style)
+    if basemap_resolved != (basemap_style or "").strip():
+        log_event(
+            LOGGER,
+            "mapbox_style_url_normalized",
+            original=basemap_style,
+            resolved=basemap_resolved,
+        )
+
     map_payload = {
         "token": mapbox_token,
         "title": title,
-        "basemap_style": basemap_style,
+        "basemap_style": basemap_resolved,
         "center": center,
         "attributionControl": False,
         "zoom": zoom,
@@ -1681,6 +1706,7 @@ def render_mapbox_gl_html(
         "render_mapbox_payload_built",
         mode=mode,
         title=title,
+        basemap_style=basemap_resolved,
         pitched_view=pitched_view,
         show_3d_buildings=show_3d_buildings,
         graph_nodes=G.number_of_nodes(),
@@ -2084,16 +2110,26 @@ def render_mapbox_gl_html(
       }});
     }}
 
+    const initialPitch = Number(payload.pitch) || 0;
     const map = new mapboxgl.Map({{
       container: 'map',
       style: payload.basemap_style,
       center: [payload.center.lon, payload.center.lat],
       zoom: payload.zoom,
-      pitch: payload.pitch,
+      pitch: initialPitch,
       bearing: payload.bearing,
+      minPitch: initialPitch,
+      maxPitch: initialPitch,
+      pitchWithRotate: false,
+      touchPitch: false,
       antialias: true,
       attributionControl: true,
       renderWorldCopies: Boolean(payload.render_world_copies)
+    }});
+    map.on('error', (e) => {{
+      const err = e && e.error;
+      const msg = err && err.message ? err.message : String(err);
+      console.error('[CSPE Mapbox] map error:', msg, '| style:', payload.basemap_style);
     }});
 
     let hoverPopup = null;
