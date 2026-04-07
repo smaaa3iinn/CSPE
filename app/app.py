@@ -324,12 +324,31 @@ def ensure_graph_bundle_inputs() -> None:
         )
         st.stop()
     if not bundle.is_file() or not popup.is_file():
+        missing_lines = []
+        if not bundle.is_file():
+            missing_lines.append(f"- **graph_bundle.pkl** → `{bundle}`")
+        if not popup.is_file():
+            missing_lines.append(f"- **stop_popup_index.parquet** → `{popup}`")
         st.error(
-            "Missing **graph_bundle.pkl** and/or **stop_popup_index.parquet** under `data/derived/…`. "
-            "They are not committed (`data/` is gitignored). "
-            "**Streamlit Cloud:** add secrets **CSPE_GRAPH_BUNDLE_URL** and **CSPE_STOP_POPUP_INDEX_URL** "
-            "with HTTPS URLs to those files. "
-            "**Local:** build or copy them into `data/derived/`."
+            "Graph data files are missing (the `data/` folder is not in git). "
+            "The app expects them at the paths below."
+        )
+        st.markdown("\n".join(missing_lines))
+        st.markdown(
+            "**Streamlit Cloud:** *Settings* (gear) → *Secrets*, then paste something like:"
+        )
+        st.code(
+            'CSPE_GRAPH_BUNDLE_URL = "https://your-host.example/graph_bundle.pkl"\n'
+            'CSPE_STOP_POPUP_INDEX_URL = "https://your-host.example/stop_popup_index.parquet"',
+            language="toml",
+        )
+        st.caption(
+            "Use **direct HTTPS links** that return the raw file (no HTML login page). "
+            "Save secrets and **Reboot** the app from the Cloud menu."
+        )
+        st.markdown(
+            "**Local:** copy or build those two files into `data/derived/routing/` and "
+            "`data/derived/stops/` next to your repo (same layout as above)."
         )
         st.stop()
 
