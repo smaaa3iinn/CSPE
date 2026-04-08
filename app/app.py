@@ -24,7 +24,10 @@ from src.viz.plot_mapbox import (
     render_mapbox_gl_html,
 )
 
-st.set_page_config(page_title="CSPE Transport Graph", layout="wide")
+import ui_shell
+
+st.set_page_config(page_title="CSPE", layout="wide")
+ui_shell.init_shell_session_state()
 
 
 def _repo_rel(*parts: str) -> str:
@@ -324,31 +327,36 @@ def ensure_graph_bundle_inputs() -> None:
         )
         st.stop()
     if not bundle.is_file() or not popup.is_file():
-        missing_lines = []
-        if not bundle.is_file():
-            missing_lines.append(f"- **graph_bundle.pkl** → `{bundle}`")
-        if not popup.is_file():
-            missing_lines.append(f"- **stop_popup_index.parquet** → `{popup}`")
-        st.error(
-            "Graph data files are missing (the `data/` folder is not in git). "
-            "The app expects them at the paths below."
-        )
-        st.markdown("\n".join(missing_lines))
+        st.error("Graph data files are missing — full setup steps are below.")
         st.markdown(
-            "**Streamlit Cloud:** *Settings* (gear) → *Secrets*, then paste something like:"
-        )
-        st.code(
-            'CSPE_GRAPH_BUNDLE_URL = "https://your-host.example/graph_bundle.pkl"\n'
-            'CSPE_STOP_POPUP_INDEX_URL = "https://your-host.example/stop_popup_index.parquet"',
-            language="toml",
-        )
-        st.caption(
-            "Use **direct HTTPS links** that return the raw file (no HTML login page). "
-            "Save secrets and **Reboot** the app from the Cloud menu."
-        )
-        st.markdown(
-            "**Local:** copy or build those two files into `data/derived/routing/` and "
-            "`data/derived/stops/` next to your repo (same layout as above)."
+            f"""
+The **`data/`** folder is not in the git repo, so Streamlit Cloud starts without these files.
+The app looks for them at:
+
+- **`graph_bundle.pkl`** → `{bundle}`
+- **`stop_popup_index.parquet`** → `{popup}`
+
+#### Streamlit Cloud
+
+1. Upload both files to a host that serves **raw bytes over HTTPS** (e.g. S3/GCS public URL, GitHub Release asset, static file URL).  
+   The URL should work in a browser or `curl` **without** an HTML login page.
+2. In the Cloud UI: **Manage app** (lower right) → **Secrets** (or **Settings → Secrets**).
+3. Paste **exactly** this shape (replace the URLs with yours):
+
+```toml
+CSPE_GRAPH_BUNDLE_URL = "https://example.com/path/graph_bundle.pkl"
+CSPE_STOP_POPUP_INDEX_URL = "https://example.com/path/stop_popup_index.parquet"
+```
+
+4. **Save** secrets, then **Reboot** the app from the Cloud menu so the new values load.
+
+#### Local
+
+Create the parent folders if needed, then place the files so the paths above exist (same layout under your repo root).
+
+---
+*If secrets are set but files are still missing, the URLs may redirect to HTML — use direct file links only.*
+"""
         )
         st.stop()
 
@@ -1610,6 +1618,28 @@ st.markdown(
     div[data-baseweb="popover"] {
         z-index: 100010 !important;
     }
+    .cspe-top-bar-title {
+        font-family: ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+        font-size: 1.05rem;
+        font-weight: 600;
+        color: var(--cspe-text);
+        padding: 0.15rem 0 0.35rem 0;
+        letter-spacing: 0.02em;
+    }
+    div[data-testid="column"]:has(#cspe-global-nav-anchor) button[kind="primary"],
+    div[data-testid="column"]:has(#cspe-global-nav-anchor) button[kind="secondary"] {
+        min-height: 2.65rem;
+        font-size: 1.2rem !important;
+        padding-left: 0.25rem !important;
+        padding-right: 0.25rem !important;
+    }
+    /* Atlas chat modal: usable size above map/iframes */
+    div[data-testid="stDialog"] [role="dialog"],
+    div[data-testid="stModal"] [role="dialog"] {
+        width: min(96vw, 720px) !important;
+        max-width: 96vw !important;
+        max-height: min(85vh, 820px) !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -1926,548 +1956,573 @@ current_path = st.session_state.get("last_path")
 last_route_result = st.session_state.get("last_route_result")
 last_route_error = st.session_state.get("last_route_error")
 
-G = (graphs_lcc if use_lcc else graphs)[mode]
-log_event(
-    LOGGER,
-    "ui_state",
-    viz_mode=viz_mode,
-    mode=mode,
-    use_lcc=use_lcc,
-    current_path_length=len(current_path) if current_path else 0,
-    poi_radius_m=poi_radius_m,
-    poi_limit=poi_limit,
-)
+app_mode_ui = st.session_state.get("app_mode", "transport")
+
+if app_mode_ui == ui_shell.APP_MODE_TRANSPORT:
+    G = (graphs_lcc if use_lcc else graphs)[mode]
+    log_event(
+        LOGGER,
+        "ui_state",
+        viz_mode=viz_mode,
+        mode=mode,
+        use_lcc=use_lcc,
+        current_path_length=len(current_path) if current_path else 0,
+        poi_radius_m=poi_radius_m,
+        poi_limit=poi_limit,
+    )
+else:
+    G = None
+
+ui_shell.render_top_bar()
 
 left_rail_col, center_col, right_col = st.columns([6, 62, 32], gap="large")
 
 with left_rail_col:
-    st.markdown('<div class="cspe-left-rail"></div>', unsafe_allow_html=True)
+    ui_shell.render_mode_nav_column()
 
 with right_col:
-    components.html(_NEURAL_ORB_HTML, height=360, scrolling=False)
-    _cspe_rgl, _cspe_rail_main, _cspe_rgr = st.columns([0.656, 9, 0.656], gap="small")
-    with _cspe_rgl:
-        st.empty()
-    with _cspe_rgr:
-        st.empty()
-    with _cspe_rail_main:
-        st.markdown(
-            '<div id="cspe-right-settings-anchor" style="height:0;margin:0;padding:0;line-height:0;font-size:0;"></div>',
-            unsafe_allow_html=True,
-        )
+    if app_mode_ui == ui_shell.APP_MODE_TRANSPORT:
+        components.html(_NEURAL_ORB_HTML, height=360, scrolling=False)
+        _cspe_rgl, _cspe_rail_main, _cspe_rgr = st.columns([0.656, 9, 0.656], gap="small")
+        with _cspe_rgl:
+            st.empty()
+        with _cspe_rgr:
+            st.empty()
+        with _cspe_rail_main:
+            st.markdown(
+                '<div id="cspe-right-settings-anchor" style="height:0;margin:0;padding:0;line-height:0;font-size:0;"></div>',
+                unsafe_allow_html=True,
+            )
 
-        st.markdown('<div class="cspe-rail-title cspe-rail-title--tight">[ GRAPH ]</div>', unsafe_allow_html=True)
-        _render_graph_settings_toggle_row(viz_mode, has_path=bool(current_path))
+            st.markdown('<div class="cspe-rail-title cspe-rail-title--tight">[ GRAPH ]</div>', unsafe_allow_html=True)
+            _render_graph_settings_toggle_row(viz_mode, has_path=bool(current_path))
 
-        _nn = G.number_of_nodes()
-        _ne = G.number_of_edges()
-        st.markdown(
-            f"""
-            <div class="cspe-net-stats">
-              <div class="cspe-rail-title cspe-rail-title--tight">[ NETWORK STATS ]</div>
-              <div class="cspe-net-stats__grid">
-                <div class="cspe-net-stats__item">
-                  <div class="cspe-net-stats__label">Nodes</div>
-                  <div class="cspe-net-stats__value">{_nn}</div>
+            _nn = G.number_of_nodes()
+            _ne = G.number_of_edges()
+            st.markdown(
+                f"""
+                <div class="cspe-net-stats">
+                  <div class="cspe-rail-title cspe-rail-title--tight">[ NETWORK STATS ]</div>
+                  <div class="cspe-net-stats__grid">
+                    <div class="cspe-net-stats__item">
+                      <div class="cspe-net-stats__label">Nodes</div>
+                      <div class="cspe-net-stats__value">{_nn}</div>
+                    </div>
+                    <div class="cspe-net-stats__item">
+                      <div class="cspe-net-stats__label">Edges</div>
+                      <div class="cspe-net-stats__value">{_ne}</div>
+                    </div>
+                  </div>
                 </div>
-                <div class="cspe-net-stats__item">
-                  <div class="cspe-net-stats__label">Edges</div>
-                  <div class="cspe-net-stats__value">{_ne}</div>
-                </div>
-              </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        with st.expander("[ TOP HUBS ]", expanded=False):
-            for hub in top_hubs(G, k=10):
-                name = hub["stop_name"] if hub["stop_name"] else hub["stop_id"]
-                st.write(f"{name} — degree={hub['degree']}")
-
-        if viz_mode == "Geographic Mapbox":
-            st.markdown(
-                '<div class="cspe-rail-title cspe-rail-title--spaced">[ NEARBY POIS ]</div>',
+                """,
                 unsafe_allow_html=True,
             )
-            _render_poi_numeric_row(
-                "POI radius (m)",
-                "controls_poi_radius_m",
-                min_value=100,
-                max_value=1000,
-                step=50,
-                current=poi_radius_m,
-            )
-            _render_poi_numeric_row(
-                "POIs shown / station",
-                "controls_poi_limit",
-                min_value=5,
-                max_value=200,
-                step=5,
-                current=poi_limit,
-            )
-            st.caption("Dense areas can fill the result cap before reaching the full radius.")
-            _render_poi_category_rail_buttons("controls_poi_category_key")
-        else:
-            st.markdown(
-                '<div class="cspe-rail-title cspe-rail-title--spaced">[ NEARBY POIS ]</div>',
-                unsafe_allow_html=True,
-            )
-            _render_poi_numeric_row(
-                "POI radius (m)",
-                "controls_poi_radius_m_3d",
-                min_value=100,
-                max_value=1000,
-                step=50,
-                current=poi_radius_m_3d,
-            )
-            _render_poi_numeric_row(
-                "POIs shown / station",
-                "controls_poi_limit_3d",
-                min_value=5,
-                max_value=200,
-                step=5,
-                current=poi_limit_3d,
-            )
-            st.caption("Dense areas can fill the result cap before reaching the full radius.")
-            _render_poi_category_rail_buttons("controls_poi_category_key_3d")
 
-        if last_route_error:
-            st.markdown(
-                '<div class="cspe-rail-title cspe-rail-title--spaced">[ ROUTE STATUS ]</div>',
-                unsafe_allow_html=True,
-            )
-            st.error(last_route_error["message"])
-            for line in last_route_error.get("details", []):
-                st.write(line)
+            with st.expander("[ TOP HUBS ]", expanded=False):
+                for hub in top_hubs(G, k=10):
+                    name = hub["stop_name"] if hub["stop_name"] else hub["stop_id"]
+                    st.write(f"{name} — degree={hub['degree']}")
 
-        if last_route_result and current_path:
-            with st.expander("[ CURRENT ROUTE ]", expanded=True):
-                st.success(f"Path found: {len(current_path)} stops")
-                if last_route_result.get("distance_m") is not None:
-                    if last_route_result["distance_m"] >= 1000:
-                        st.write(f"Estimated distance: {last_route_result['distance_m'] / 1000:.2f} km")
-                    else:
-                        st.write(f"Estimated distance: {last_route_result['distance_m']:.0f} m")
-                if last_route_result.get("time_s") is not None:
-                    st.write(f"Estimated time: {last_route_result['time_s'] / 60:.1f} min")
-                st.write(f"Transfers: {last_route_result.get('transfers', 0)}")
-
-                pretty = []
-                for sid in current_path[:80]:
-                    nm = G.nodes[sid].get("stop_name", "")
-                    pretty.append(f"{nm} ({sid})" if nm else sid)
-
-                st.text("\n".join(pretty) + ("\n..." if len(current_path) > 80 else ""))
-                st.download_button(
-                    "Download path (txt)",
-                    data=("\n".join(pretty)).encode("utf-8"),
-                    file_name="path.txt",
-                    mime="text/plain",
-                    use_container_width=True,
+            if viz_mode == "Geographic Mapbox":
+                st.markdown(
+                    '<div class="cspe-rail-title cspe-rail-title--spaced">[ NEARBY POIS ]</div>',
+                    unsafe_allow_html=True,
                 )
+                _render_poi_numeric_row(
+                    "POI radius (m)",
+                    "controls_poi_radius_m",
+                    min_value=100,
+                    max_value=1000,
+                    step=50,
+                    current=poi_radius_m,
+                )
+                _render_poi_numeric_row(
+                    "POIs shown / station",
+                    "controls_poi_limit",
+                    min_value=5,
+                    max_value=200,
+                    step=5,
+                    current=poi_limit,
+                )
+                st.caption("Dense areas can fill the result cap before reaching the full radius.")
+                _render_poi_category_rail_buttons("controls_poi_category_key")
+            else:
+                st.markdown(
+                    '<div class="cspe-rail-title cspe-rail-title--spaced">[ NEARBY POIS ]</div>',
+                    unsafe_allow_html=True,
+                )
+                _render_poi_numeric_row(
+                    "POI radius (m)",
+                    "controls_poi_radius_m_3d",
+                    min_value=100,
+                    max_value=1000,
+                    step=50,
+                    current=poi_radius_m_3d,
+                )
+                _render_poi_numeric_row(
+                    "POIs shown / station",
+                    "controls_poi_limit_3d",
+                    min_value=5,
+                    max_value=200,
+                    step=5,
+                    current=poi_limit_3d,
+                )
+                st.caption("Dense areas can fill the result cap before reaching the full radius.")
+                _render_poi_category_rail_buttons("controls_poi_category_key_3d")
+
+            if last_route_error:
+                st.markdown(
+                    '<div class="cspe-rail-title cspe-rail-title--spaced">[ ROUTE STATUS ]</div>',
+                    unsafe_allow_html=True,
+                )
+                st.error(last_route_error["message"])
+                for line in last_route_error.get("details", []):
+                    st.write(line)
+
+            if last_route_result and current_path:
+                with st.expander("[ CURRENT ROUTE ]", expanded=True):
+                    st.success(f"Path found: {len(current_path)} stops")
+                    if last_route_result.get("distance_m") is not None:
+                        if last_route_result["distance_m"] >= 1000:
+                            st.write(f"Estimated distance: {last_route_result['distance_m'] / 1000:.2f} km")
+                        else:
+                            st.write(f"Estimated distance: {last_route_result['distance_m']:.0f} m")
+                    if last_route_result.get("time_s") is not None:
+                        st.write(f"Estimated time: {last_route_result['time_s'] / 60:.1f} min")
+                    st.write(f"Transfers: {last_route_result.get('transfers', 0)}")
+
+                    pretty = []
+                    for sid in current_path[:80]:
+                        nm = G.nodes[sid].get("stop_name", "")
+                        pretty.append(f"{nm} ({sid})" if nm else sid)
+
+                    st.text("\n".join(pretty) + ("\n..." if len(current_path) > 80 else ""))
+                    st.download_button(
+                        "Download path (txt)",
+                        data=("\n".join(pretty)).encode("utf-8"),
+                        file_name="path.txt",
+                        mime="text/plain",
+                        use_container_width=True,
+                    )
+
+    elif app_mode_ui == ui_shell.APP_MODE_KNOWLEDGE:
+        ui_shell.render_knowledge_right()
+    elif app_mode_ui == ui_shell.APP_MODE_VISUAL:
+        ui_shell.render_visual_board_right()
+    elif app_mode_ui == ui_shell.APP_MODE_MEMORY:
+        ui_shell.render_memory_right()
 
 with center_col:
-    st.markdown('<div id="map-zone-anchor"></div>', unsafe_allow_html=True)
-    if viz_mode == "Geographic Mapbox":
-        token, _token_env = get_mapbox_token()
-        if token is None:
-            st.warning(
-                "Mapbox mode needs a token: set `MAPBOX_ACCESS_TOKEN_INLINE` in `app/app.py`, "
-                "or `MAPBOX_TOKEN` / `MAPBOX_API_KEY` / `MAPBOX_ACCESS_TOKEN` in the environment "
-                "or Streamlit Cloud Secrets."
-            )
-            log_event(LOGGER, "render_mapbox_skipped_missing_token", viz_mode=viz_mode, mode=mode)
-        else:
-            line_geometries = load_line_geometries_cached(NETWORK_MAPS_DIR)
-            render_graphs = load_render_graphs_cached(RENDER_GRAPH_PATHS)
-            poi_lookup = load_poi_lookup_cached(POI_DATA_PATH, POI_TREE_PATH, POI_NPZ_PATH)
-            log_event(
-                LOGGER,
-                "render_mapbox_start",
-                viz_mode=viz_mode,
-                mode=mode,
-                use_lcc=use_lcc,
-                node_count=G.number_of_nodes(),
-                edge_count=G.number_of_edges(),
-                has_line_geometries=line_geometries is not None,
-                render_graph_modes="|".join(sorted(render_graphs.keys())) if render_graphs else "",
-                poi_lookup_loaded=poi_lookup is not None,
-            )
-            map_html, _path_debug = render_mapbox_gl_html(
-                G,
-                mapbox_token=token,
-                mode=mode,
-                path=current_path,
-                show_transfers=show_transfers_map,
-            title=f"Mode: {mode} {'(LCC)' if use_lcc else ''}",
-                basemap_style=DEFAULT_MAPBOX_STYLE,
-                line_geometries=line_geometries,
-                render_graphs_by_mode=render_graphs or None,
-                poi_lookup=poi_lookup,
-                poi_radius_m=float(poi_radius_m),
-                poi_limit=int(poi_limit),
-                poi_category_key=None if poi_category_key == "All" else poi_category_key,
-                pitched_view=False,
-                show_3d_buildings=False,
-                height_px=1100,
-            )
-            components.html(map_html, height=1100)
-    else:
-        token, _token_env = get_mapbox_token()
-        if token is None:
-            st.warning(
-                "Mapbox mode needs a token: set `MAPBOX_ACCESS_TOKEN_INLINE` in `app/app.py`, "
-                "or `MAPBOX_TOKEN` / `MAPBOX_API_KEY` / `MAPBOX_ACCESS_TOKEN` in the environment "
-                "or Streamlit Cloud Secrets."
-            )
-            log_event(LOGGER, "render_3d_skipped_missing_token", viz_mode=viz_mode, mode=mode)
-        else:
-            line_geometries = load_line_geometries_cached(NETWORK_MAPS_DIR)
-            render_graphs = load_render_graphs_cached(RENDER_GRAPH_PATHS)
-            poi_lookup = load_poi_lookup_cached(POI_DATA_PATH, POI_TREE_PATH, POI_NPZ_PATH)
-            log_event(
-                LOGGER,
-                "render_3d_start",
-                viz_mode=viz_mode,
-                mode=mode,
-                use_lcc=use_lcc,
-                node_count=G.number_of_nodes(),
-                edge_count=G.number_of_edges(),
-                has_line_geometries=line_geometries is not None,
-                render_graph_modes="|".join(sorted(render_graphs.keys())) if render_graphs else "",
-                poi_lookup_loaded=poi_lookup is not None,
-            )
-            map_html, _path_debug = render_mapbox_gl_html(
-                G,
-                mapbox_token=token,
-                mode=mode,
-                path=current_path,
-                show_transfers=show_transfers_network_3d,
+    if app_mode_ui == ui_shell.APP_MODE_TRANSPORT:
+        st.markdown('<div id="map-zone-anchor"></div>', unsafe_allow_html=True)
+        if viz_mode == "Geographic Mapbox":
+            token, _token_env = get_mapbox_token()
+            if token is None:
+                st.warning(
+                    "Mapbox mode needs a token: set `MAPBOX_ACCESS_TOKEN_INLINE` in `app/app.py`, "
+                    "or `MAPBOX_TOKEN` / `MAPBOX_API_KEY` / `MAPBOX_ACCESS_TOKEN` in the environment "
+                    "or Streamlit Cloud Secrets."
+                )
+                log_event(LOGGER, "render_mapbox_skipped_missing_token", viz_mode=viz_mode, mode=mode)
+            else:
+                line_geometries = load_line_geometries_cached(NETWORK_MAPS_DIR)
+                render_graphs = load_render_graphs_cached(RENDER_GRAPH_PATHS)
+                poi_lookup = load_poi_lookup_cached(POI_DATA_PATH, POI_TREE_PATH, POI_NPZ_PATH)
+                log_event(
+                    LOGGER,
+                    "render_mapbox_start",
+                    viz_mode=viz_mode,
+                    mode=mode,
+                    use_lcc=use_lcc,
+                    node_count=G.number_of_nodes(),
+                    edge_count=G.number_of_edges(),
+                    has_line_geometries=line_geometries is not None,
+                    render_graph_modes="|".join(sorted(render_graphs.keys())) if render_graphs else "",
+                    poi_lookup_loaded=poi_lookup is not None,
+                )
+                map_html, _path_debug = render_mapbox_gl_html(
+                    G,
+                    mapbox_token=token,
+                    mode=mode,
+                    path=current_path,
+                    show_transfers=show_transfers_map,
                 title=f"Mode: {mode} {'(LCC)' if use_lcc else ''}",
-                basemap_style=DEFAULT_MAPBOX_STYLE,
-                line_geometries=line_geometries,
-                render_graphs_by_mode=render_graphs or None,
-                poi_lookup=poi_lookup,
-                poi_radius_m=float(poi_radius_m_3d),
-                poi_limit=int(poi_limit_3d),
-                poi_category_key=None if poi_category_key_3d == "All" else poi_category_key_3d,
-                pitched_view=True,
-                show_3d_buildings=True,
-                height_px=1100,
-            )
-            components.html(map_html, height=1100)
+                    basemap_style=DEFAULT_MAPBOX_STYLE,
+                    line_geometries=line_geometries,
+                    render_graphs_by_mode=render_graphs or None,
+                    poi_lookup=poi_lookup,
+                    poi_radius_m=float(poi_radius_m),
+                    poi_limit=int(poi_limit),
+                    poi_category_key=None if poi_category_key == "All" else poi_category_key,
+                    pitched_view=False,
+                    show_3d_buildings=False,
+                    height_px=1100,
+                )
+                components.html(map_html, height=1100)
+        else:
+            token, _token_env = get_mapbox_token()
+            if token is None:
+                st.warning(
+                    "Mapbox mode needs a token: set `MAPBOX_ACCESS_TOKEN_INLINE` in `app/app.py`, "
+                    "or `MAPBOX_TOKEN` / `MAPBOX_API_KEY` / `MAPBOX_ACCESS_TOKEN` in the environment "
+                    "or Streamlit Cloud Secrets."
+                )
+                log_event(LOGGER, "render_3d_skipped_missing_token", viz_mode=viz_mode, mode=mode)
+            else:
+                line_geometries = load_line_geometries_cached(NETWORK_MAPS_DIR)
+                render_graphs = load_render_graphs_cached(RENDER_GRAPH_PATHS)
+                poi_lookup = load_poi_lookup_cached(POI_DATA_PATH, POI_TREE_PATH, POI_NPZ_PATH)
+                log_event(
+                    LOGGER,
+                    "render_3d_start",
+                    viz_mode=viz_mode,
+                    mode=mode,
+                    use_lcc=use_lcc,
+                    node_count=G.number_of_nodes(),
+                    edge_count=G.number_of_edges(),
+                    has_line_geometries=line_geometries is not None,
+                    render_graph_modes="|".join(sorted(render_graphs.keys())) if render_graphs else "",
+                    poi_lookup_loaded=poi_lookup is not None,
+                )
+                map_html, _path_debug = render_mapbox_gl_html(
+                    G,
+                    mapbox_token=token,
+                    mode=mode,
+                    path=current_path,
+                    show_transfers=show_transfers_network_3d,
+                    title=f"Mode: {mode} {'(LCC)' if use_lcc else ''}",
+                    basemap_style=DEFAULT_MAPBOX_STYLE,
+                    line_geometries=line_geometries,
+                    render_graphs_by_mode=render_graphs or None,
+                    poi_lookup=poi_lookup,
+                    poi_radius_m=float(poi_radius_m_3d),
+                    poi_limit=int(poi_limit_3d),
+                    poi_category_key=None if poi_category_key_3d == "All" else poi_category_key_3d,
+                    pitched_view=True,
+                    show_3d_buildings=True,
+                    height_px=1100,
+                )
+                components.html(map_html, height=1100)
 
-    overlay_host = st.container()
-    with overlay_host:
-        st.markdown('<div id="controls-overlay-anchor"></div>', unsafe_allow_html=True)
-        _render_map_controls_overlay()
-        st.markdown('<div id="controls-overlay-end"></div>', unsafe_allow_html=True)
+        overlay_host = st.container()
+        with overlay_host:
+            st.markdown('<div id="controls-overlay-anchor"></div>', unsafe_allow_html=True)
+            _render_map_controls_overlay()
+            st.markdown('<div id="controls-overlay-end"></div>', unsafe_allow_html=True)
 
-    route_bar_host = st.container()
-    with route_bar_host:
-        st.markdown('<div id="route-bar-anchor"></div>', unsafe_allow_html=True)
-        _route_bar_fragment(G, mode)
+        route_bar_host = st.container()
+        with route_bar_host:
+            st.markdown('<div id="route-bar-anchor"></div>', unsafe_allow_html=True)
+            _route_bar_fragment(G, mode)
 
-    st.html(
-        """
-        <script>
-        (() => {
-          const attachOverlayHost = () => {
-            const anchor = document.getElementById('controls-overlay-anchor');
-            const end = document.getElementById('controls-overlay-end');
-            if (!anchor || !end) {
-              return false;
-            }
-            const chain = [];
-            let x = anchor;
-            while (x) {
-              chain.push(x);
-              x = x.parentElement;
-            }
-            let host = null;
-            let y = end;
-            while (y) {
-              if (chain.includes(y)) {
-                host = y;
-                break;
-              }
-              y = y.parentElement;
-            }
-            if (!host || host.tagName === 'BODY') {
-              return false;
-            }
-            const stalePortal = document.body.querySelector('#controls-portal');
-            if (stalePortal && stalePortal !== host) {
-              stalePortal.removeAttribute('id');
-            }
-            host.id = 'controls-portal';
-            host.style.margin = '0';
-            host.style.overflow = 'visible';
-            return true;
-          };
-
-          const attachRouteBarHost = () => {
-            const rowMarker = document.getElementById('route-bar-portal-root');
-            let host = rowMarker ? rowMarker.closest('[data-testid="stHorizontalBlock"]') : null;
-            if (!host) {
-              const anchor = document.getElementById('route-bar-anchor');
-              if (!anchor) {
-                return false;
-              }
-              let h = anchor.parentElement;
-              while (h) {
-                const inputs = h.querySelectorAll('[data-testid="stTextInput"]');
-                if (inputs.length >= 2) {
-                  host = h;
-                  break;
-                }
-                h = h.parentElement;
-                if (!h || h.tagName === 'BODY') {
+        st.html(
+            """
+            <script>
+            (() => {
+              const attachOverlayHost = () => {
+                const anchor = document.getElementById('controls-overlay-anchor');
+                const end = document.getElementById('controls-overlay-end');
+                if (!anchor || !end) {
                   return false;
                 }
-              }
-              const tis = host.querySelectorAll('[data-testid="stTextInput"]');
-              if (tis.length >= 2) {
-                let a = tis[0];
-                while (a && host.contains(a)) {
-                  if (
-                    a.getAttribute &&
-                    a.getAttribute('data-testid') === 'stHorizontalBlock' &&
-                    a.contains(tis[1])
-                  ) {
-                    host = a;
+                const chain = [];
+                let x = anchor;
+                while (x) {
+                  chain.push(x);
+                  x = x.parentElement;
+                }
+                let host = null;
+                let y = end;
+                while (y) {
+                  if (chain.includes(y)) {
+                    host = y;
                     break;
                   }
-                  a = a.parentElement;
+                  y = y.parentElement;
                 }
-              }
-            }
-            if (!host) {
-              return false;
-            }
-            const stale = document.getElementById('route-bar-portal');
-            if (stale && stale !== host) {
-              stale.removeAttribute('id');
-            }
-            host.id = 'route-bar-portal';
-            host.style.margin = '0';
-            host.style.overflow = 'visible';
-            host.style.setProperty('z-index', '80', 'important');
-            return true;
-          };
+                if (!host || host.tagName === 'BODY') {
+                  return false;
+                }
+                const stalePortal = document.body.querySelector('#controls-portal');
+                if (stalePortal && stalePortal !== host) {
+                  stalePortal.removeAttribute('id');
+                }
+                host.id = 'controls-portal';
+                host.style.margin = '0';
+                host.style.overflow = 'visible';
+                return true;
+              };
 
-          /* streamlit-searchbox iframe height is driven by React; that grows the route row. Pin columns + use a tall
-             absolutely positioned iframe so the control stays anchored and the menu opens upward inside the iframe. */
-          const applyRouteSearchOverlayLayout = () => {
-            const portal = document.getElementById('route-bar-portal');
-            if (!portal) {
-              return;
-            }
-            portal.style.setProperty('overflow', 'visible', 'important');
-            portal.style.setProperty('z-index', '80', 'important');
-            portal.querySelectorAll('iframe[title="streamlit_searchbox.searchbox"]').forEach((ifr) => {
-              const col = ifr.closest('[data-testid="column"]');
-              if (col) {
-                col.style.setProperty('position', 'relative', 'important');
-                col.style.setProperty('min-height', '2.5rem', 'important');
-                col.style.setProperty('height', '2.5rem', 'important');
-                col.style.setProperty('max-height', '2.5rem', 'important');
-                col.style.setProperty('overflow', 'visible', 'important');
-              }
-              let p = ifr.parentElement;
-              while (p && p !== portal) {
-                p.style.setProperty('overflow', 'visible', 'important');
-                p = p.parentElement;
-              }
-              ifr.style.setProperty('position', 'absolute', 'important');
-              ifr.style.setProperty('left', '0', 'important');
-              ifr.style.setProperty('right', '0', 'important');
-              ifr.style.setProperty('bottom', '0', 'important');
-              ifr.style.setProperty('width', '100%', 'important');
-              ifr.style.setProperty('height', '300px', 'important');
-              ifr.style.setProperty('min-height', '300px', 'important');
-              ifr.style.setProperty('max-height', '300px', 'important');
-              ifr.style.setProperty('z-index', '90', 'important');
-              ifr.style.setProperty('margin', '0', 'important');
-              try {
-                const doc = ifr.contentDocument;
-                if (!doc || !doc.head) {
+              const attachRouteBarHost = () => {
+                const rowMarker = document.getElementById('route-bar-portal-root');
+                let host = rowMarker ? rowMarker.closest('[data-testid="stHorizontalBlock"]') : null;
+                if (!host) {
+                  const anchor = document.getElementById('route-bar-anchor');
+                  if (!anchor) {
+                    return false;
+                  }
+                  let h = anchor.parentElement;
+                  while (h) {
+                    const inputs = h.querySelectorAll('[data-testid="stTextInput"]');
+                    if (inputs.length >= 2) {
+                      host = h;
+                      break;
+                    }
+                    h = h.parentElement;
+                    if (!h || h.tagName === 'BODY') {
+                      return false;
+                    }
+                  }
+                  const tis = host.querySelectorAll('[data-testid="stTextInput"]');
+                  if (tis.length >= 2) {
+                    let a = tis[0];
+                    while (a && host.contains(a)) {
+                      if (
+                        a.getAttribute &&
+                        a.getAttribute('data-testid') === 'stHorizontalBlock' &&
+                        a.contains(tis[1])
+                      ) {
+                        host = a;
+                        break;
+                      }
+                      a = a.parentElement;
+                    }
+                  }
+                }
+                if (!host) {
+                  return false;
+                }
+                const stale = document.getElementById('route-bar-portal');
+                if (stale && stale !== host) {
+                  stale.removeAttribute('id');
+                }
+                host.id = 'route-bar-portal';
+                host.style.margin = '0';
+                host.style.overflow = 'visible';
+                host.style.setProperty('z-index', '80', 'important');
+                return true;
+              };
+
+              /* streamlit-searchbox iframe height is driven by React; that grows the route row. Pin columns + use a tall
+                 absolutely positioned iframe so the control stays anchored and the menu opens upward inside the iframe. */
+              const applyRouteSearchOverlayLayout = () => {
+                const portal = document.getElementById('route-bar-portal');
+                if (!portal) {
                   return;
                 }
-                let st = doc.getElementById('cspe-route-search-inner');
-                if (!st) {
-                  st = doc.createElement('style');
-                  st.id = 'cspe-route-search-inner';
-                  st.textContent = `
-                    html, body {
-                      height: 100% !important;
-                      margin: 0 !important;
-                      overflow: visible !important;
-                      background: transparent !important;
+                portal.style.setProperty('overflow', 'visible', 'important');
+                portal.style.setProperty('z-index', '80', 'important');
+                portal.querySelectorAll('iframe[title="streamlit_searchbox.searchbox"]').forEach((ifr) => {
+                  const col = ifr.closest('[data-testid="column"]');
+                  if (col) {
+                    col.style.setProperty('position', 'relative', 'important');
+                    col.style.setProperty('min-height', '2.5rem', 'important');
+                    col.style.setProperty('height', '2.5rem', 'important');
+                    col.style.setProperty('max-height', '2.5rem', 'important');
+                    col.style.setProperty('overflow', 'visible', 'important');
+                  }
+                  let p = ifr.parentElement;
+                  while (p && p !== portal) {
+                    p.style.setProperty('overflow', 'visible', 'important');
+                    p = p.parentElement;
+                  }
+                  ifr.style.setProperty('position', 'absolute', 'important');
+                  ifr.style.setProperty('left', '0', 'important');
+                  ifr.style.setProperty('right', '0', 'important');
+                  ifr.style.setProperty('bottom', '0', 'important');
+                  ifr.style.setProperty('width', '100%', 'important');
+                  ifr.style.setProperty('height', '300px', 'important');
+                  ifr.style.setProperty('min-height', '300px', 'important');
+                  ifr.style.setProperty('max-height', '300px', 'important');
+                  ifr.style.setProperty('z-index', '90', 'important');
+                  ifr.style.setProperty('margin', '0', 'important');
+                  try {
+                    const doc = ifr.contentDocument;
+                    if (!doc || !doc.head) {
+                      return;
                     }
-                    #root {
-                      height: 100% !important;
-                      min-height: 100% !important;
-                      display: flex !important;
-                      flex-direction: column !important;
-                      justify-content: flex-end !important;
-                      align-items: stretch !important;
-                      overflow: visible !important;
-                      box-sizing: border-box !important;
+                    let st = doc.getElementById('cspe-route-search-inner');
+                    if (!st) {
+                      st = doc.createElement('style');
+                      st.id = 'cspe-route-search-inner';
+                      st.textContent = `
+                        html, body {
+                          height: 100% !important;
+                          margin: 0 !important;
+                          overflow: visible !important;
+                          background: transparent !important;
+                        }
+                        #root {
+                          height: 100% !important;
+                          min-height: 100% !important;
+                          display: flex !important;
+                          flex-direction: column !important;
+                          justify-content: flex-end !important;
+                          align-items: stretch !important;
+                          overflow: visible !important;
+                          box-sizing: border-box !important;
+                        }
+                        #root > div {
+                          width: 100% !important;
+                          max-width: 100% !important;
+                        }
+                        div[class*="menu" i]:not([class*="MenuList" i]) {
+                          top: auto !important;
+                          bottom: 100% !important;
+                          margin-bottom: 6px !important;
+                          margin-top: 0 !important;
+                        }
+                        div[class*="MenuList" i] {
+                          max-height: min(42vh, 220px) !important;
+                        }
+                      `;
+                      doc.head.appendChild(st);
                     }
-                    #root > div {
-                      width: 100% !important;
-                      max-width: 100% !important;
-                    }
-                    div[class*="menu" i]:not([class*="MenuList" i]) {
-                      top: auto !important;
-                      bottom: 100% !important;
-                      margin-bottom: 6px !important;
-                      margin-top: 0 !important;
-                    }
-                    div[class*="MenuList" i] {
-                      max-height: min(42vh, 220px) !important;
-                    }
-                  `;
-                  doc.head.appendChild(st);
-                }
-              } catch (e) {
-                /* not same-origin yet */
-              }
-            });
-          };
+                  } catch (e) {
+                    /* not same-origin yet */
+                  }
+                });
+              };
 
-          const attachRightRailInset = () => {
-            const mapA = document.getElementById('map-zone-anchor');
-            const railA = document.getElementById('cspe-right-settings-anchor');
-            if (!mapA || !railA) {
-              return false;
-            }
-            let el = railA;
-            while (el) {
-              const hb = el.closest('[data-testid="stHorizontalBlock"]');
-              if (!hb) {
-                break;
-              }
-              const cols = [...hb.querySelectorAll(':scope > div[data-testid="column"]')];
-              if (
-                cols.length === 3 &&
-                cols.some((c) => c.contains(mapA)) &&
-                cols.some((c) => c.contains(railA))
-              ) {
-                const rc = cols[2];
-                const pad = 'clamp(5px, 0.84vw, 8px)';
-                rc.style.setProperty('padding-left', pad, 'important');
-                rc.style.setProperty('padding-right', pad, 'important');
-                rc.style.setProperty('box-sizing', 'border-box', 'important');
-                const vb = rc.querySelector(':scope > div[data-testid="stVerticalBlock"]');
-                if (vb) {
-                  vb.style.setProperty('max-width', '100%', 'important');
-                  vb.style.setProperty('box-sizing', 'border-box', 'important');
+              const attachRightRailInset = () => {
+                const mapA = document.getElementById('map-zone-anchor');
+                const railA = document.getElementById('cspe-right-settings-anchor');
+                if (!mapA || !railA) {
+                  return false;
                 }
+                let el = railA;
+                while (el) {
+                  const hb = el.closest('[data-testid="stHorizontalBlock"]');
+                  if (!hb) {
+                    break;
+                  }
+                  const cols = [...hb.querySelectorAll(':scope > div[data-testid="column"]')];
+                  if (
+                    cols.length === 3 &&
+                    cols.some((c) => c.contains(mapA)) &&
+                    cols.some((c) => c.contains(railA))
+                  ) {
+                    const rc = cols[2];
+                    const pad = 'clamp(5px, 0.84vw, 8px)';
+                    rc.style.setProperty('padding-left', pad, 'important');
+                    rc.style.setProperty('padding-right', pad, 'important');
+                    rc.style.setProperty('box-sizing', 'border-box', 'important');
+                    const vb = rc.querySelector(':scope > div[data-testid="stVerticalBlock"]');
+                    if (vb) {
+                      vb.style.setProperty('max-width', '100%', 'important');
+                      vb.style.setProperty('box-sizing', 'border-box', 'important');
+                    }
+                    return true;
+                  }
+                  el = hb.parentElement;
+                }
+                return false;
+              };
+
+              const ensureMapStackRoot = () => {
+                const mapAnchor = document.getElementById('map-zone-anchor');
+                if (!mapAnchor) {
+                  return false;
+                }
+                const root = mapAnchor.closest('div[data-testid="stVerticalBlock"]');
+                if (!root) {
+                  return false;
+                }
+                root.classList.add('cspe-map-stack-root');
+                root.style.setProperty('position', 'relative', 'important');
+                root.style.setProperty('min-height', '100vh', 'important');
+                root.style.setProperty('height', '100vh', 'important');
+                root.style.setProperty('overflow', 'visible', 'important');
                 return true;
-              }
-              el = hb.parentElement;
-            }
-            return false;
-          };
+              };
 
-          const ensureMapStackRoot = () => {
-            const mapAnchor = document.getElementById('map-zone-anchor');
-            if (!mapAnchor) {
-              return false;
-            }
-            const root = mapAnchor.closest('div[data-testid="stVerticalBlock"]');
-            if (!root) {
-              return false;
-            }
-            root.classList.add('cspe-map-stack-root');
-            root.style.setProperty('position', 'relative', 'important');
-            root.style.setProperty('min-height', '100vh', 'important');
-            root.style.setProperty('height', '100vh', 'important');
-            root.style.setProperty('overflow', 'visible', 'important');
-            return true;
-          };
+              const tryAttachOverlays = () => {
+                ensureMapStackRoot();
+                attachOverlayHost();
+                attachRouteBarHost();
+                attachRightRailInset();
+                applyRouteSearchOverlayLayout();
+              };
+              tryAttachOverlays();
+              requestAnimationFrame(tryAttachOverlays);
+              setTimeout(tryAttachOverlays, 120);
+              setInterval(applyRouteSearchOverlayLayout, 350);
+            })();
+            </script>
+            """,
+            unsafe_allow_javascript=True,
+        )
 
-          const tryAttachOverlays = () => {
-            ensureMapStackRoot();
-            attachOverlayHost();
-            attachRouteBarHost();
-            attachRightRailInset();
-            applyRouteSearchOverlayLayout();
-          };
-          tryAttachOverlays();
-          requestAnimationFrame(tryAttachOverlays);
-          setTimeout(tryAttachOverlays, 120);
-          setInterval(applyRouteSearchOverlayLayout, 350);
-        })();
-        </script>
-        """,
-        unsafe_allow_javascript=True,
-    )
-
-with center_col:
-    _route_bar_action = st.session_state.pop("_route_bar_action", None)
-    if _route_bar_action == "clear":
-        log_event(LOGGER, "route_cleared")
-        for k in ("route_sb_s", "route_sb_e"):
-            st.session_state.pop(k, None)
-        st.session_state["controls_start_choice"] = None
-        st.session_state["controls_end_choice"] = None
-        st.session_state["controls_start_q"] = ""
-        st.session_state["controls_end_q"] = ""
-        st.session_state["last_path"] = None
-        st.session_state["last_route_result"] = None
-        st.session_state["last_route_error"] = None
-        st.rerun()
-
-    if _route_bar_action == "compute":
-        start_choice = st.session_state.get("controls_start_choice")
-        end_choice = st.session_state.get("controls_end_choice")
-        if start_choice and end_choice:
-            a = start_choice["stop_id"]
-            b = end_choice["stop_id"]
-            log_event(LOGGER, "route_compute_clicked", start_stop_id=a, end_stop_id=b, mode=mode, use_lcc=use_lcc)
-            a_info = component_info(G, a)
-            b_info = component_info(G, b)
-            res = shortest_path(G, a, b)
-            if res["ok"]:
-                log_event(
-                    LOGGER,
-                    "route_compute_success",
-                    start_stop_id=a,
-                    end_stop_id=b,
-                    path_length=len(res.get("path") or []),
-                    distance_m=res.get("distance_m"),
-                    time_s=res.get("time_s"),
-                    transfers=res.get("transfers"),
-                )
-                st.session_state["last_path"] = res["path"]
-                st.session_state["last_route_result"] = res
-                st.session_state["last_route_error"] = None
-            else:
-                details: list[str] = []
-                message = "Path computation failed."
-                if res["reason"] == "not_connected":
-                    message = "No path: the two stops are not connected in this graph."
-                    details = [
-                        f"Start component size: {a_info.get('component_size', 0)}",
-                        f"End component size: {b_info.get('component_size', 0)}",
-                    ]
-                elif res["reason"] == "start_not_found":
-                    message = "Start stop not found in the current graph."
-                elif res["reason"] == "end_not_found":
-                    message = "End stop not found in the current graph."
-                log_event(
-                    LOGGER,
-                    "route_compute_failed",
-                    start_stop_id=a,
-                    end_stop_id=b,
-                    reason=res.get("reason"),
-                    start_component_size=a_info.get("component_size", 0),
-                    end_component_size=b_info.get("component_size", 0),
-                )
-                st.session_state["last_route_error"] = {"message": message, "details": details}
-                st.session_state["last_route_result"] = None
+        _route_bar_action = st.session_state.pop("_route_bar_action", None)
+        if _route_bar_action == "clear":
+            log_event(LOGGER, "route_cleared")
+            for k in ("route_sb_s", "route_sb_e"):
+                st.session_state.pop(k, None)
+            st.session_state["controls_start_choice"] = None
+            st.session_state["controls_end_choice"] = None
+            st.session_state["controls_start_q"] = ""
+            st.session_state["controls_end_q"] = ""
+            st.session_state["last_path"] = None
+            st.session_state["last_route_result"] = None
+            st.session_state["last_route_error"] = None
             st.rerun()
+
+        if _route_bar_action == "compute":
+            start_choice = st.session_state.get("controls_start_choice")
+            end_choice = st.session_state.get("controls_end_choice")
+            if start_choice and end_choice:
+                a = start_choice["stop_id"]
+                b = end_choice["stop_id"]
+                log_event(LOGGER, "route_compute_clicked", start_stop_id=a, end_stop_id=b, mode=mode, use_lcc=use_lcc)
+                a_info = component_info(G, a)
+                b_info = component_info(G, b)
+                res = shortest_path(G, a, b)
+                if res["ok"]:
+                    log_event(
+                        LOGGER,
+                        "route_compute_success",
+                        start_stop_id=a,
+                        end_stop_id=b,
+                        path_length=len(res.get("path") or []),
+                        distance_m=res.get("distance_m"),
+                        time_s=res.get("time_s"),
+                        transfers=res.get("transfers"),
+                    )
+                    st.session_state["last_path"] = res["path"]
+                    st.session_state["last_route_result"] = res
+                    st.session_state["last_route_error"] = None
+                else:
+                    details: list[str] = []
+                    message = "Path computation failed."
+                    if res["reason"] == "not_connected":
+                        message = "No path: the two stops are not connected in this graph."
+                        details = [
+                            f"Start component size: {a_info.get('component_size', 0)}",
+                            f"End component size: {b_info.get('component_size', 0)}",
+                        ]
+                    elif res["reason"] == "start_not_found":
+                        message = "Start stop not found in the current graph."
+                    elif res["reason"] == "end_not_found":
+                        message = "End stop not found in the current graph."
+                    log_event(
+                        LOGGER,
+                        "route_compute_failed",
+                        start_stop_id=a,
+                        end_stop_id=b,
+                        reason=res.get("reason"),
+                        start_component_size=a_info.get("component_size", 0),
+                        end_component_size=b_info.get("component_size", 0),
+                    )
+                    st.session_state["last_route_error"] = {"message": message, "details": details}
+                    st.session_state["last_route_result"] = None
+                st.rerun()
+
+    elif app_mode_ui == ui_shell.APP_MODE_KNOWLEDGE:
+        ui_shell.render_knowledge_center()
+    elif app_mode_ui == ui_shell.APP_MODE_VISUAL:
+        ui_shell.render_visual_board_center()
+    elif app_mode_ui == ui_shell.APP_MODE_MEMORY:
+        ui_shell.render_memory_center()
+
+ui_shell.render_atlas_chat_dock()
+ui_shell.render_atlas_overlay_if_open()
