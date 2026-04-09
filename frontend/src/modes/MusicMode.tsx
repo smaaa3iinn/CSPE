@@ -8,6 +8,7 @@ import {
   getSpotifySavedTracksSummary,
   getSpotifyStatus,
   productApiHasSpotifySearch,
+  spotifyProbe,
   searchSpotifyTracks,
   spotifyDisconnect,
   spotifyNext,
@@ -23,6 +24,8 @@ const LIKED_SONGS_ROW_ID = "__liked_songs__";
 
 export function MusicMode() {
   const [connected, setConnected] = useState<boolean | null>(null);
+  /** From saved OAuth scope; null = unknown (legacy token) or not connected. */
+  const [playlistScopesOk, setPlaylistScopesOk] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [searchQ, setSearchQ] = useState("");
@@ -40,6 +43,8 @@ export function MusicMode() {
   const [tracksLoadingId, setTracksLoadingId] = useState<string | null>(null);
   const [likedTotal, setLikedTotal] = useState<number | null>(null);
   const [likedFirstUri, setLikedFirstUri] = useState<string | null>(null);
+  const [probeLine, setProbeLine] = useState<string | null>(null);
+  const [pageOrigin, setPageOrigin] = useState("");
 
   /** After manual disconnect, do not immediately send the user through OAuth again. */
   const skipAutoOAuthRef = useRef(false);
@@ -48,15 +53,22 @@ export function MusicMode() {
 
   const refresh = useCallback(async () => {
     try {
-      setConnected(await getSpotifyStatus());
+      const s = await getSpotifyStatus();
+      setConnected(s.connected);
+      setPlaylistScopesOk(s.playlist_scopes_ok);
     } catch {
       setConnected(false);
+      setPlaylistScopesOk(null);
     }
   }, []);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    setPageOrigin(typeof window !== "undefined" ? window.location.origin : "");
+  }, []);
 
   useEffect(() => {
     void (async () => {
@@ -72,6 +84,7 @@ export function MusicMode() {
       setTracksByPl({});
       setLikedTotal(null);
       setLikedFirstUri(null);
+      setPlaylistScopesOk(null);
       return;
     }
     setPlLoading(true);
@@ -152,6 +165,8 @@ export function MusicMode() {
       await spotifyDisconnect();
       skipAutoOAuthRef.current = true;
       setConnected(false);
+      setPlaylistScopesOk(null);
+      setProbeLine(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Disconnect failed");
     } finally {
@@ -248,15 +263,24 @@ export function MusicMode() {
           <div className="music-page__inner music-page__inner--wide">
             <h1>Music</h1>
             <p className="music-page__sub">
-              Spotify redirect URI: <strong>http://127.0.0.1:5173/callback</strong>. Use{" "}
-              <strong>http://127.0.0.1:5173</strong> (not <code>localhost</code>) so login matches that origin. After
-              changing permissions, use <strong>Disconnect</strong> and sign in again. If tracks still fail with 403,
+              Spotify redirect URI must match this page:{" "}
+              <strong>{pageOrigin ? `${pageOrigin}/callback` : "http://<your-host>:5173/callback"}</strong> — set{" "}
+              <code>SPOTIFY_REDIRECT_URI</code> in <code>.env</code> and in the Spotify app settings (add a separate URI
+              when opening the app from another device on Wi‑Fi, e.g. <code>http://192.168.x.x:5173/callback</code>). Prefer{" "}
+              <code>127.0.0.1</code> over <code>localhost</code> on the laptop. After changing permissions, use{" "}
+              <strong>Disconnect</strong> and sign in again. If tracks still fail with 403,
               remove this app at{" "}
               <a href="https://www.spotify.com/account/apps/" target="_blank" rel="noreferrer">
                 spotify.com/account/apps
               </a>{" "}
-              then connect once more (forces new scopes). Spotify does not list <strong>Liked songs</strong> as a normal
-              playlist; it appears separately below.
+              then connect once more (forces new scopes). If you still get <strong>403 Forbidden</strong> after that, open
+              your app on{" "}
+              <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noreferrer">
+                developer.spotify.com/dashboard
+              </a>{" "}
+              → <strong>Settings → User Management</strong> and add the Spotify account email you log in with (Development
+              mode only allows allowlisted users; OAuth can succeed while Web API calls fail). Spotify does not list{" "}
+              <strong>Liked songs</strong> as a normal playlist; it appears separately below.
             </p>
 
             {searchCapable === false && (
@@ -271,6 +295,55 @@ export function MusicMode() {
               <span className="music-status__dot" aria-hidden />
               {connected === null ? "Checking…" : connected ? "Connected" : "Not connected"}
             </div>
+
+            {connected && playlistScopesOk === false && (
+              <p className="music-scope-warn" role="status">
+                This login is missing <strong>playlist-read-private</strong> / <strong>playlist-read-collaborative</strong>.
+                Open{" "}
+                <a href="https://www.spotify.com/account/apps/" target="_blank" rel="noreferrer">
+                  spotify.com/account/apps
+                </a>
+                , remove this app, use <strong>Disconnect</strong> here, then <strong>Connect</strong> again and accept all
+                permissions.
+              </p>
+            )}
+            {connected && playlistScopesOk === null && (
+              <p className="music-scope-hint" role="status">
+                Reconnect once if playlist tracks show <strong>Forbidden</strong> — older logins did not save scope on
+                disk; a fresh Connect fixes it.
+              </p>
+            )}
+
+            {connected && (
+              <p className="music-scope-hint" style={{ marginTop: 0 }}>
+                <button
+                  type="button"
+                  className="music-btn music-btn--ghost"
+                  style={{ padding: "6px 12px", fontSize: 12 }}
+                  disabled={busy}
+                  onClick={() => {
+                    setProbeLine(null);
+                    void (async () => {
+                      try {
+                        const p = await spotifyProbe();
+                        if (p.ok) {
+                          setProbeLine(`API OK — ${p.display_name ?? p.user_id ?? "?"} (${p.product ?? "?"})`);
+                        } else {
+                          setProbeLine(
+                            `API ${p.http_status ?? "?"}: ${p.spotify_error ?? "error"} — ${p.hint ?? "See dashboard User Management."}`,
+                          );
+                        }
+                      } catch (e) {
+                        setProbeLine(e instanceof Error ? e.message : "Probe failed");
+                      }
+                    })();
+                  }}
+                >
+                  Test Spotify Web API (/me)
+                </button>
+                {probeLine && <span className="music-probe-result"> {probeLine}</span>}
+              </p>
+            )}
 
             {connected && nowLine && <p className="music-now">{nowLine}</p>}
 
@@ -325,9 +398,10 @@ export function MusicMode() {
                   <section className="music-playlists" aria-label="Your Spotify playlists and Liked songs">
                     <h2 className="music-playlists__title">Your library</h2>
                     <p className="music-playlists__hint">
-                      <strong>Liked songs</strong> is loaded from your saved tracks. Other rows are playlists you own or
-                      follow. Expand a row to load all tracks. Local files are skipped. Use <strong>Play</strong> to start
-                      that context on your active Spotify device.
+                      <strong>Liked songs</strong> uses your saved library. Other rows are playlists you own or follow.
+                      Expand a row to load items (music + podcasts). <strong>Local files only</strong> in a playlist show
+                      as empty here because they are not streamable via the API. Use <strong>Play</strong> to start that
+                      context on your active Spotify device.
                     </p>
                     {plLoading && <p className="music-playlists__loading">Loading library…</p>}
                     {plErr && <div className="music-err" style={{ marginTop: 0 }}>{plErr}</div>}

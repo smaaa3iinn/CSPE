@@ -1,3 +1,41 @@
+/* App chrome: top bar + tool rail + main */
+.app-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.app-topbar {
+  flex-shrink: 0;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.app-topbar__icon {
+  font-size: 18px;
+  color: var(--accent);
+}
+
+.app-topbar__title {
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.app-root__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
 /* Shared full-bleed mode layout + floating right panel (same max width as transport top-left card) */
 
 .mode-page {
@@ -59,7 +97,7 @@
   padding: 14px 16px;
   border-radius: 14px;
   background: rgba(22, 28, 38, 0.82);
-  border: 1px solid rgba(94, 234, 212, 0.18);
+  border: 1px solid rgba(148, 163, 184, 0.18);
   backdrop-filter: blur(14px);
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
 }
@@ -82,14 +120,14 @@
 }
 
 .mode-page__float-right button.ghost {
-  border-color: rgba(94, 234, 212, 0.2);
+  border-color: rgba(148, 163, 184, 0.2);
   background: rgba(10, 14, 22, 0.55);
   color: rgba(210, 225, 240, 0.95);
 }
 
 .mode-page__float-right button.ghost:hover {
-  border-color: rgba(94, 234, 212, 0.4);
-  background: rgba(34, 211, 238, 0.08);
+  border-color: rgba(148, 163, 184, 0.4);
+  background: rgba(148, 163, 184, 0.08);
 }
 
 .memory-inline-input,
@@ -98,7 +136,7 @@
   font-size: 12px;
   color: rgba(230, 240, 250, 0.95);
   background: rgba(8, 12, 20, 0.75);
-  border: 1px solid rgba(94, 234, 212, 0.22);
+  border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 8px;
   padding: 8px 10px;
 }
@@ -106,7 +144,7 @@
 .memory-inline-input:focus,
 .memory-inline-select:focus {
   outline: none;
-  border-color: rgba(34, 211, 238, 0.45);
+  border-color: rgba(148, 163, 184, 0.45);
 }
 
 .memory-inline-select {
@@ -120,9 +158,9 @@
   text-transform: uppercase;
   padding: 8px 12px;
   border-radius: 8px;
-  border: 1px solid rgba(34, 211, 238, 0.45);
-  background: linear-gradient(180deg, rgba(34, 211, 238, 0.22), rgba(6, 182, 212, 0.28));
-  color: #ecfeff;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: linear-gradient(180deg, rgba(100, 116, 139, 0.4), rgba(51, 65, 85, 0.55));
+  color: #f8fafc;
   cursor: pointer;
 }
 
@@ -139,14 +177,14 @@
   font-size: 10px;
   padding: 6px 8px;
   border-radius: 6px;
-  border: 1px solid rgba(94, 234, 212, 0.2);
+  border: 1px solid rgba(148, 163, 184, 0.2);
   background: transparent;
   color: rgba(200, 220, 235, 0.85);
   cursor: pointer;
 }
 
 .memory-btn-ghost:hover:not(:disabled) {
-  border-color: rgba(94, 234, 212, 0.4);
+  border-color: rgba(148, 163, 184, 0.4);
   background: rgba(255, 255, 255, 0.04);
 }
 

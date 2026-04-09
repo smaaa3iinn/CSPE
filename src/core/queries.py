@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections import deque
 import re
+from typing import Any
+
 import networkx as nx
 
 
@@ -20,24 +22,63 @@ def _stop_name_prefix_match(normalized_name: str, q: str) -> bool:
     return any(part.startswith(q) for part in normalized_name.split() if part)
 
 
+def _station_search_extras(r: dict) -> dict[str, Any]:
+    """Preserve station-first fields through line expansion."""
+    out: dict[str, Any] = {}
+    for k in ("station_id", "station_name", "primary_stop_id", "stop_ids"):
+        if k in r and r[k] is not None:
+            out[k] = r[k]
+    return out
+
+
+def _merge_mode_lines_union(G: nx.Graph, members: list[str]) -> dict[str, list[str]] | None:
+    """Union line labels across all child stops (platforms) for each transport mode."""
+    merged: dict[str, list[str]] = {}
+    for m in members:
+        if m not in G:
+            continue
+        node_lines = G.nodes[m].get("lines")
+        if not isinstance(node_lines, dict):
+            continue
+        for mode_key, vals in node_lines.items():
+            bucket = merged.setdefault(str(mode_key), [])
+            for v in vals or []:
+                sv = str(v).strip()
+                if sv and sv not in bucket:
+                    bucket.append(sv)
+    return merged or None
+
+
 def _expand_and_cap_route_results(
-    results: list[dict], *, mode: str | None, limit: int
+    results: list[dict], *, mode: str | None, limit: int, station_compact: bool = False
 ) -> list[dict]:
     """Shared metro/rail/tram line expansion + bus compacting (matches search_stops)."""
     if mode in {"metro", "rail", "tram"}:
-        expanded = []
-        for r in results:
-            lines = (r.get("_lines") or {}).get(mode, [])
-            lines = list(lines)[:8]
-            if lines:
-                for ln in lines:
-                    expanded.append({"stop_id": r["stop_id"], "stop_name": r["stop_name"], "line": ln})
-            else:
-                expanded.append({"stop_id": r["stop_id"], "stop_name": r["stop_name"], "line": None})
-        results = expanded
+        if station_compact:
+            compact: list[dict] = []
+            for r in results:
+                extra = _station_search_extras(r)
+                lines_dict = r.get("_lines") or {}
+                line_list = list(lines_dict.get(mode, []))[:24]
+                line_str = ", ".join(line_list) if line_list else None
+                compact.append({"stop_id": r["stop_id"], "stop_name": r["stop_name"], "line": line_str, **extra})
+            results = compact
+        else:
+            expanded = []
+            for r in results:
+                extra = _station_search_extras(r)
+                lines = (r.get("_lines") or {}).get(mode, [])
+                lines = list(lines)[:8]
+                if lines:
+                    for ln in lines:
+                        expanded.append({"stop_id": r["stop_id"], "stop_name": r["stop_name"], "line": ln, **extra})
+                else:
+                    expanded.append({"stop_id": r["stop_id"], "stop_name": r["stop_name"], "line": None, **extra})
+            results = expanded
     else:
         compact = []
         for r in results:
+            extra = _station_search_extras(r)
             lines_dict = r.get("_lines") or {}
             summary_parts = []
             for m in ("metro", "rail", "tram"):
@@ -48,6 +89,7 @@ def _expand_and_cap_route_results(
                     "stop_id": r["stop_id"],
                     "stop_name": r["stop_name"],
                     "line": " | ".join(summary_parts) if summary_parts else None,
+                    **extra,
                 }
             )
         results = compact
@@ -226,6 +268,92 @@ def shortest_path(G: nx.Graph, a: str, b: str, strategy: str = "hops", use_weigh
         }
     except Exception:
         return {"ok": False, "reason": "path_error", "path": [], "distance_m": None, "time_s": None, "transfers": 0, "strategy": strategy}
+
+
+def search_stations_autocomplete(
+    G: nx.Graph,
+    idx: Any,
+    query: str,
+    limit: int = 40,
+    mode: str | None = None,
+    *,
+    station_compact: bool = False,
+) -> list[dict]:
+    """
+    Station-first suggestions: one row per station (child platform stops grouped).
+    Grouping uses GTFS parent_station when present, else transfer connectivity and
+    same normalized name within geographic proximity (not name alone).
+    With ``station_compact=True`` (station-first API search): lines are merged across all
+    child platforms into one row per station; no per-line duplication.
+    Otherwise expanded rows keep stop_id = primary_stop_id for per-line fan-out.
+    """
+    q = normalize_text(query)
+    if not q:
+        return []
+
+    from src.core.station_layer import StationLayerIndex
+
+    if not isinstance(idx, StationLayerIndex):
+        return []
+
+    seen_station: set[str] = set()
+    raw: list[dict] = []
+
+    for station_id, label in idx.station_label.items():
+        if station_id in seen_station:
+            continue
+        nn = normalize_text(label)
+        if _stop_name_prefix_match(nn, q):
+            members = idx.station_to_stops.get(station_id, [])
+            primary = sorted(members)[0] if members else ""
+            line_src = (
+                _merge_mode_lines_union(G, members)
+                if station_compact
+                else (G.nodes[primary].get("lines") if primary in G else None)
+            )
+            raw.append(
+                {
+                    "station_id": station_id,
+                    "station_name": label,
+                    "stop_ids": members,
+                    "primary_stop_id": primary,
+                    "stop_id": primary,
+                    "stop_name": label,
+                    "_lines": line_src,
+                }
+            )
+            seen_station.add(station_id)
+            continue
+        for member in idx.station_to_stops.get(station_id, []):
+            if member not in G:
+                continue
+            name = str(G.nodes[member].get("stop_name", ""))
+            if name and _stop_name_prefix_match(normalize_text(name), q):
+                members = idx.station_to_stops.get(station_id, [])
+                primary = sorted(members)[0] if members else member
+                line_src = (
+                    _merge_mode_lines_union(G, members)
+                    if station_compact
+                    else G.nodes[primary].get("lines")
+                )
+                raw.append(
+                    {
+                        "station_id": station_id,
+                        "station_name": label,
+                        "stop_ids": members,
+                        "primary_stop_id": primary,
+                        "stop_id": primary,
+                        "stop_name": label,
+                        "_lines": line_src,
+                    }
+                )
+                seen_station.add(station_id)
+                break
+
+    raw.sort(key=lambda r: normalize_text(r["station_name"]))
+    return _expand_and_cap_route_results(
+        raw, mode=mode, limit=limit, station_compact=station_compact
+    )
 
 
 def k_hop_subgraph(G: nx.Graph, center: str, k: int = 2, max_nodes: int = 3000) -> nx.Graph:

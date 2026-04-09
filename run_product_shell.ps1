@@ -5,4 +5,5 @@
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 $env:PYTHONPATH = $PWD.Path
-& .\.venv\Scripts\python.exe -m uvicorn backend.product_shell.main:app --reload --host 127.0.0.1 --port 8787
+Write-Host 'Listening on 0.0.0.0:8787 — LAN clients may use http://<this-PC-IPv4>:8787 when VITE_API_BASE is set.'
+& .\.venv\Scripts\python.exe -m uvicorn backend.product_shell.main:app --reload --host 0.0.0.0 --port 8787

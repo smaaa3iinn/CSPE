@@ -89,12 +89,12 @@
 }
 
 .memory-card:focus-visible {
-  outline: 2px solid rgba(34, 211, 238, 0.65);
+  outline: 2px solid rgba(148, 163, 184, 0.65);
   outline-offset: 2px;
 }
 
 .memory-card--selected {
-  outline: 2px solid rgba(34, 211, 238, 0.55);
+  outline: 2px solid rgba(148, 163, 184, 0.55);
   outline-offset: 0;
 }
 
@@ -257,7 +257,7 @@
 .memory-tasks-section {
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px solid rgba(94, 234, 212, 0.1);
+  border-top: 1px solid rgba(148, 163, 184, 0.1);
 }
 
 .memory-tasks-section__title {
@@ -294,7 +294,7 @@
 }
 
 .memory-kanban__col--drag {
-  outline: 1px dashed rgba(34, 211, 238, 0.35);
+  outline: 1px dashed rgba(148, 163, 184, 0.35);
   background: rgba(15, 23, 42, 0.75);
 }
 
@@ -320,8 +320,8 @@
 }
 
 .memory-kanban__dot--doing {
-  background: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.22);
+  background: #64748b;
+  box-shadow: 0 0 0 3px rgba(100, 116, 139, 0.28);
 }
 
 .memory-kanban__dot--done {
@@ -396,7 +396,7 @@
 }
 
 .memory-kanban__card:hover {
-  border-color: rgba(94, 234, 212, 0.22);
+  border-color: rgba(148, 163, 184, 0.22);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 

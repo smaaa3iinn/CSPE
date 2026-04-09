@@ -34,6 +34,9 @@ SCOPES = " ".join(
     ]
 )
 
+# Both required for GET /playlists/{id}/tracks on private / collaborative playlists.
+PLAYLIST_TRACK_SCOPES = ("playlist-read-private", "playlist-read-collaborative")
+
 _lock = threading.Lock()
 _store: dict[str, Any] | None = None
 
@@ -64,6 +67,7 @@ def _persist_store_unlocked() -> None:
         "refresh_token": _store.get("refresh_token"),
         "token_type": _store.get("token_type", "Bearer"),
         "expires_in": _store.get("expires_in"),
+        "scope": _store.get("scope"),
     }
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -98,6 +102,7 @@ def _load_store_from_disk() -> None:
             "refresh_token": data.get("refresh_token"),
             "token_type": data.get("token_type") or "Bearer",
             "expires_in": data.get("expires_in"),
+            "scope": data.get("scope"),
         }
     logger.info("Spotify tokens loaded from disk (%s)", path)
 
@@ -136,7 +141,8 @@ def build_authorize_url() -> str:
     # Forces the Spotify approval screen so new scopes apply (silent re-login often keeps old scopes).
     if os.getenv("SPOTIFY_OAUTH_SHOW_DIALOG", "true").strip().lower() not in ("0", "false", "no"):
         params["show_dialog"] = "true"
-    q = urllib.parse.urlencode(params, safe="")
+    # Use %20 for spaces (not +) — some OAuth stacks are picky about scope in the query string.
+    q = urllib.parse.urlencode(params, safe="", quote_via=urllib.parse.quote)
     url = f"{SPOTIFY_AUTH}?{q}"
     cid_log = (cid[:8] + "…") if len(cid) >= 8 else "(unset)"
     logger.info("Spotify authorize URL built | redirect_uri=%r | client_id_prefix=%s", rid, cid_log)
@@ -171,6 +177,37 @@ def _exchange_code(code: str) -> dict[str, Any]:
     return body
 
 
+def _scope_set_from_raw(raw: Any) -> set[str]:
+    if isinstance(raw, str) and raw.strip():
+        return {s.strip() for s in raw.split() if s.strip()}
+    return set()
+
+
+def _require_playlist_scopes_in_token_payload(token_payload: dict[str, Any]) -> None:
+    """Fail fast at OAuth if Spotify did not grant playlist scopes (avoids cryptic 403 on playlist tracks)."""
+    scopes = _scope_set_from_raw(token_payload.get("scope"))
+    if not scopes:
+        logger.warning(
+            "Spotify token response has no usable `scope` string — cannot verify playlist permissions (keys=%s)",
+            list(token_payload.keys()),
+        )
+        return
+    missing = [s for s in PLAYLIST_TRACK_SCOPES if s not in scopes]
+    if not missing:
+        return
+    logger.error("Spotify OAuth missing required scopes %s | granted=%s", missing, sorted(scopes))
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"Spotify did not grant playlist permissions (missing: {', '.join(missing)}). "
+            f"Granted: {' '.join(sorted(scopes))}. "
+            "Remove this app at https://www.spotify.com/account/apps/ , Disconnect here, Connect again, "
+            "and accept all checkboxes. If your app is in Development mode on developer.spotify.com/dashboard, "
+            "add your Spotify account email under Settings → User Management (otherwise Web API calls can return 403)."
+        ),
+    )
+
+
 def _refresh_access() -> bool:
     global _store
     with _lock:
@@ -196,6 +233,9 @@ def _refresh_access() -> bool:
         _store["access_token"] = body.get("access_token")
         if body.get("refresh_token"):
             _store["refresh_token"] = body["refresh_token"]
+        sc = body.get("scope")
+        if isinstance(sc, str) and sc.strip():
+            _store["scope"] = sc.strip()
         _persist_store_unlocked()
         return True
 
@@ -233,23 +273,84 @@ def spotify_callback(body: CallbackBody) -> dict[str, Any]:
         logger.exception("Spotify exchange failed")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
+    _require_playlist_scopes_in_token_payload(token_payload)
+
+    scope_raw = token_payload.get("scope")
+    scope_str = scope_raw.strip() if isinstance(scope_raw, str) else None
     with _lock:
         _store = {
             "access_token": token_payload.get("access_token"),
             "refresh_token": token_payload.get("refresh_token"),
             "token_type": token_payload.get("token_type", "Bearer"),
             "expires_in": token_payload.get("expires_in"),
+            "scope": scope_str,
         }
         _persist_store_unlocked()
     logger.info("Spotify tokens stored (memory + disk)")
     return {"ok": True}
 
 
+def _scope_list_unlocked() -> list[str]:
+    raw = (_store or {}).get("scope")
+    if not isinstance(raw, str) or not raw.strip():
+        return []
+    return [s for s in raw.split() if s]
+
+
+def _playlist_scopes_report_unlocked() -> tuple[list[str], bool | None]:
+    """(scopes_granted, playlist_scopes_ok). Third value None = unknown (legacy token file without scope)."""
+    scopes = _scope_list_unlocked()
+    if not scopes:
+        return [], None
+    ok = all(s in scopes for s in PLAYLIST_TRACK_SCOPES)
+    return scopes, ok
+
+
 @router.get("/spotify/status")
 def spotify_status() -> dict[str, Any]:
     with _lock:
         connected = bool(_store and _store.get("access_token"))
-    return {"connected": connected}
+        scopes_granted, playlist_scopes_ok = _playlist_scopes_report_unlocked()
+    return {
+        "connected": connected,
+        "scopes_granted": scopes_granted,
+        "playlist_scopes_ok": playlist_scopes_ok,
+    }
+
+
+@router.get("/spotify/probe")
+def spotify_probe() -> dict[str, Any]:
+    """GET /v1/me — if this returns 403, Development mode user allowlist is the usual cause (not missing scopes)."""
+    _require_config()
+    with _lock:
+        if not _store or not _store.get("access_token"):
+            raise HTTPException(status_code=401, detail="Not connected to Spotify")
+    r = _api_call("GET", "/me")
+    if r.status_code == 200:
+        data = r.json()
+        if not isinstance(data, dict):
+            return {"ok": True, "web_api": "unexpected body"}
+        return {
+            "ok": True,
+            "user_id": data.get("id"),
+            "display_name": data.get("display_name"),
+            "product": data.get("product"),
+            "hint": None,
+        }
+    msg = _spotify_error_message(r)
+    return {
+        "ok": False,
+        "http_status": r.status_code,
+        "spotify_error": msg,
+        "hint": (
+            "Spotify Development mode: add your Spotify login email under "
+            "developer.spotify.com/dashboard → your app → Settings → User Management. "
+            "Users not on that list often get 403 on all Web API calls even after a successful login. "
+            "The dashboard app owner must use Spotify Premium in Development mode."
+        )
+        if r.status_code == 403
+        else None,
+    }
 
 
 @router.post("/spotify/disconnect")
@@ -319,6 +420,25 @@ def _track_from_item(item: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _episode_from_item(ep: dict[str, Any]) -> dict[str, Any] | None:
+    """Map a podcast episode to the same row shape as tracks (playlist items can be track or episode)."""
+    if not isinstance(ep, dict):
+        return None
+    uri = ep.get("uri")
+    if not isinstance(uri, str) or not uri.strip():
+        return None
+    show = ep.get("show") if isinstance(ep.get("show"), dict) else {}
+    show_name = str(show.get("name") or show.get("publisher") or "").strip()
+    label = show_name if show_name else "Podcast"
+    return {
+        "id": ep.get("id"),
+        "uri": uri.strip(),
+        "name": str(ep.get("name") or ""),
+        "artists": label,
+        "album": "",
+    }
+
+
 def _spotify_error_message(r: requests.Response) -> str:
     """Prefer Spotify JSON ``error.message`` when present."""
     raw = (r.text or "").strip()
@@ -341,11 +461,30 @@ def _raise_spotify_list_error(r: requests.Response, label: str) -> None:
     spotify_msg = _spotify_error_message(r)
     detail = spotify_msg
     if r.status_code == 403:
+        with _lock:
+            _, pl_ok = _playlist_scopes_report_unlocked()
+        dev_mode = (
+            " Development mode: users not allowlisted on developer.spotify.com/dashboard → your app → "
+            "Settings → User Management often get 403 on Web API calls even after OAuth succeeds. "
+            "Add your Spotify email there. App owner needs Premium in Development mode."
+        )
+        extra = ""
+        if pl_ok is False:
+            extra = (
+                " Saved token is missing playlist scopes — Disconnect, remove this app at "
+                "https://www.spotify.com/account/apps/ , then Connect again."
+            )
+        elif pl_ok is None:
+            extra = (
+                " Reconnect once so scopes are saved to disk, or remove the app at "
+                "https://www.spotify.com/account/apps/ and Connect again."
+            )
         detail = (
-            f"{spotify_msg} — If you recently added API scopes, revoke this app at "
-            "https://www.spotify.com/account/apps/ , then Disconnect here and connect again "
-            "(the login URL now uses show_dialog so Spotify asks for all scopes). "
-            "Required for tracks: playlist-read-private, playlist-read-collaborative."
+            f"Spotify API: {spotify_msg}. "
+            f"{dev_mode}"
+            " If the error mentions scope, revoke the app and reconnect with all permissions; "
+            "playlist tracks need playlist-read-private and playlist-read-collaborative."
+            f"{extra}"
         )
     logger.warning("Spotify %s | status=%s | body=%s", label, r.status_code, r.text[:400])
     raise HTTPException(status_code=r.status_code or 500, detail=detail)
@@ -393,7 +532,11 @@ def spotify_my_playlists() -> dict[str, Any]:
 
 @router.get("/spotify/playlists/{playlist_id}/tracks")
 def spotify_playlist_tracks(playlist_id: str) -> dict[str, Any]:
-    """All tracks in a playlist (local files omitted). Uses ``next`` paging + ``market=from_token``."""
+    """Tracks and podcast episodes in a playlist (local files omitted).
+
+    Spotify returns episodes only when ``additional_types`` includes ``episode``; otherwise
+    those rows look like empty ``track`` and the list would appear blank.
+    """
     _require_config()
     pid = _safe_playlist_id(playlist_id)
     tracks_out: list[dict[str, Any]] = []
@@ -406,7 +549,11 @@ def spotify_playlist_tracks(playlist_id: str) -> dict[str, Any]:
             r = _api_call(
                 "GET",
                 path,
-                params={"limit": 100, "market": "from_token"},
+                params={
+                    "limit": 100,
+                    "market": "from_token",
+                    "additional_types": "track,episode",
+                },
             )
         else:
             if not next_url:
@@ -420,11 +567,16 @@ def spotify_playlist_tracks(playlist_id: str) -> dict[str, Any]:
             if not isinstance(row, dict):
                 continue
             tr = row.get("track")
-            if not isinstance(tr, dict) or tr.get("is_local"):
+            if isinstance(tr, dict) and not tr.get("is_local"):
+                norm = _track_from_item(tr)
+                if norm and isinstance(norm.get("uri"), str) and norm["uri"].strip():
+                    tracks_out.append(norm)
                 continue
-            norm = _track_from_item(tr)
-            if norm and norm.get("uri"):
-                tracks_out.append(norm)
+            ep = row.get("episode")
+            if isinstance(ep, dict):
+                norm = _episode_from_item(ep)
+                if norm:
+                    tracks_out.append(norm)
         next_url = data.get("next") if isinstance(data.get("next"), str) else None
         if not next_url:
             break

@@ -180,14 +180,16 @@ try {
 
     Write-Host '[2] Starting product API on port 8787 (minimized window)...'
     $bff = Start-Process -FilePath $cspePy -ArgumentList @(
-        "-m", "uvicorn", "backend.product_shell.main:app", "--reload", "--host", "127.0.0.1", "--port", "8787"
+        "-m", "uvicorn", "backend.product_shell.main:app", "--reload", "--host", "0.0.0.0", "--port", "8787"
     ) -WorkingDirectory $Root -WindowStyle Minimized -PassThru
 
     Start-Sleep -Seconds 2
     Wait-HttpOk -Url "http://127.0.0.1:8787/api/health" -Label "Product API" -MaxSeconds 60
 
-    Write-Host '[3] Starting Vite on port 5173 - open http://127.0.0.1:5173 (Spotify requires 127.0.0.1, not localhost)'
-    Write-Host '    Spotify dashboard: redirect URI http://127.0.0.1:5173/callback + SPOTIFY_* in .env'
+    Write-Host '[3] Starting Vite on 0.0.0.0:5173 - laptop: http://127.0.0.1:5173'
+    Write-Host '    Same WiFi iPad or phone: http://YOUR_LAN_IP:5173 - run ipconfig to find IPv4'
+    Write-Host '    Optional .env: VITE_API_BASE=http://YOUR_LAN_IP:8787 if you bypass the Vite proxy; SPOTIFY_REDIRECT_URI must match the page origin for OAuth.'
+    Write-Host '    Spotify dashboard: add redirect URI for each origin, e.g. http://192.168.x.x:5173/callback'
     Write-Host '    Press Ctrl+C here to stop the dev server; background Python processes will be stopped.'
     Set-Location (Join-Path $Root "frontend")
     npm run dev

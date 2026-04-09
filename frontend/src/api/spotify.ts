@@ -1,27 +1,55 @@
+import { apiUrl } from "./config";
+
 export async function getSpotifyLoginUrl(): Promise<string> {
-  const r = await fetch("/api/spotify/login-url");
+  const r = await fetch(apiUrl("/api/spotify/login-url"));
   if (!r.ok) throw new Error(`login-url ${r.status}`);
   const data = (await r.json()) as { url: string };
   return data.url;
 }
 
 export async function exchangeSpotifyCode(code: string): Promise<void> {
-  const r = await fetch("/api/spotify/callback", {
+  const r = await fetch(apiUrl("/api/spotify/callback"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ code }),
   });
   if (!r.ok) {
     const t = await r.text();
+    try {
+      const j = JSON.parse(t) as { detail?: string };
+      if (typeof j.detail === "string" && j.detail.trim()) {
+        throw new Error(j.detail);
+      }
+    } catch (e) {
+      if (e instanceof SyntaxError) {
+        /* use raw body below */
+      } else {
+        throw e;
+      }
+    }
     throw new Error(t || `callback ${r.status}`);
   }
 }
 
-export async function getSpotifyStatus(): Promise<boolean> {
-  const r = await fetch("/api/spotify/status");
-  if (!r.ok) return false;
-  const data = (await r.json()) as { connected: boolean };
-  return Boolean(data.connected);
+export type SpotifyStatus = {
+  connected: boolean;
+  /** Space-separated scopes from Spotify (empty if legacy token file without scope). */
+  scopes_granted: string[];
+  /** False = token is missing playlist-read-* scopes; null = unknown (reconnect once to record scopes). */
+  playlist_scopes_ok: boolean | null;
+};
+
+export async function getSpotifyStatus(): Promise<SpotifyStatus> {
+  const r = await fetch(apiUrl("/api/spotify/status"));
+  if (!r.ok) {
+    return { connected: false, scopes_granted: [], playlist_scopes_ok: null };
+  }
+  const data = (await r.json()) as Partial<SpotifyStatus>;
+  return {
+    connected: Boolean(data.connected),
+    scopes_granted: Array.isArray(data.scopes_granted) ? data.scopes_granted : [],
+    playlist_scopes_ok: data.playlist_scopes_ok ?? null,
+  };
 }
 
 export type SpotifyTrackHit = {
@@ -69,7 +97,7 @@ export async function productApiHasSpotifySearch(): Promise<boolean | null> {
 
 /** Resume if `uris` omitted or empty; otherwise start playback of those Spotify URIs. */
 export async function spotifyPlay(uris?: string[]): Promise<void> {
-  const r = await fetch("/api/spotify/play", {
+  const r = await fetch(apiUrl("/api/spotify/play"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(uris?.length ? { uris } : {}),
@@ -79,7 +107,7 @@ export async function spotifyPlay(uris?: string[]): Promise<void> {
 
 /** Start playback in album or playlist context. */
 export async function spotifyPlayContext(contextUri: string): Promise<void> {
-  const r = await fetch("/api/spotify/play", {
+  const r = await fetch(apiUrl("/api/spotify/play"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ context_uri: contextUri.trim() }),
@@ -98,7 +126,7 @@ export type SpotifyPlaylistSummary = {
 };
 
 export async function getSpotifyPlaylists(): Promise<SpotifyPlaylistSummary[]> {
-  const r = await fetch("/api/spotify/playlists");
+  const r = await fetch(apiUrl("/api/spotify/playlists"));
   if (!r.ok) throw new Error(formatApiError(r.status, await r.text()));
   const data = (await r.json()) as { playlists: SpotifyPlaylistSummary[] };
   return data.playlists ?? [];
@@ -108,13 +136,13 @@ export async function getSpotifySavedTracksSummary(): Promise<{
   total: number;
   first_track_uri: string | null;
 }> {
-  const r = await fetch("/api/spotify/saved-tracks/summary");
+  const r = await fetch(apiUrl("/api/spotify/saved-tracks/summary"));
   if (!r.ok) throw new Error(formatApiError(r.status, await r.text()));
   return (await r.json()) as { total: number; first_track_uri: string | null };
 }
 
 export async function getSpotifySavedTracks(): Promise<SpotifyTrackHit[]> {
-  const r = await fetch("/api/spotify/saved-tracks");
+  const r = await fetch(apiUrl("/api/spotify/saved-tracks"));
   if (!r.ok) throw new Error(formatApiError(r.status, await r.text()));
   const data = (await r.json()) as { tracks: SpotifyTrackHit[] };
   return data.tracks ?? [];
@@ -122,7 +150,7 @@ export async function getSpotifySavedTracks(): Promise<SpotifyTrackHit[]> {
 
 export async function getSpotifyPlaylistTracks(playlistId: string): Promise<SpotifyTrackHit[]> {
   const id = encodeURIComponent(playlistId);
-  const r = await fetch(`/api/spotify/playlists/${id}/tracks`);
+  const r = await fetch(apiUrl(`/api/spotify/playlists/${id}/tracks`));
   if (!r.ok) throw new Error(formatApiError(r.status, await r.text()));
   const data = (await r.json()) as { tracks: SpotifyTrackHit[] };
   return data.tracks ?? [];
@@ -130,14 +158,14 @@ export async function getSpotifyPlaylistTracks(playlistId: string): Promise<Spot
 
 export async function searchSpotifyTracks(q: string, limit = 10): Promise<SpotifyTrackHit[]> {
   const params = new URLSearchParams({ q: q.trim(), limit: String(limit) });
-  const r = await fetch(`/api/spotify/search?${params}`);
+  const r = await fetch(apiUrl(`/api/spotify/search?${params}`));
   if (!r.ok) throw new Error(formatApiError(r.status, await r.text()));
   const data = (await r.json()) as { tracks: SpotifyTrackHit[] };
   return data.tracks ?? [];
 }
 
 export async function getSpotifyPlayback(): Promise<SpotifyPlayback | null> {
-  const r = await fetch("/api/spotify/playback");
+  const r = await fetch(apiUrl("/api/spotify/playback"));
   if (r.status === 401) return null;
   if (!r.ok) return null;
   return (await r.json()) as SpotifyPlayback;
@@ -149,10 +177,31 @@ export async function spotifyPause(): Promise<void> {
 }
 
 export async function spotifyNext(): Promise<void> {
-  const r = await fetch("/api/spotify/next", { method: "POST" });
+  const r = await fetch(apiUrl("/api/spotify/next"), { method: "POST" });
   if (!r.ok) throw new Error(await r.text());
 }
 
 export async function spotifyDisconnect(): Promise<void> {
   await fetch("/api/spotify/disconnect", { method: "POST" });
+}
+
+export type SpotifyProbeResult = {
+  ok: boolean;
+  user_id?: string;
+  display_name?: string;
+  product?: string;
+  web_api?: string;
+  http_status?: number;
+  spotify_error?: string;
+  hint?: string | null;
+};
+
+/** GET /v1/me — if ok is false with 403, add your email under Developer Dashboard → User Management. */
+export async function spotifyProbe(): Promise<SpotifyProbeResult> {
+  const r = await fetch(apiUrl("/api/spotify/probe"));
+  const data = (await r.json()) as SpotifyProbeResult & { detail?: string };
+  if (!r.ok) {
+    throw new Error(data.detail || `probe ${r.status}`);
+  }
+  return data;
 }

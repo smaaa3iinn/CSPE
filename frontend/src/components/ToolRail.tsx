@@ -54,7 +54,7 @@ export function ToolRail({ mode, onMode }: { mode: AppMode; onMode: (m: AppMode)
             borderRadius: 10,
             border: mode === m ? "1px solid var(--accent)" : "1px solid transparent",
             color: mode === m ? "var(--text)" : "var(--text-muted)",
-            background: mode === m ? "rgba(59,130,246,0.12)" : "transparent",
+            background: mode === m ? "rgba(148,163,184,0.14)" : "transparent",
           }}
         >
           {BTN[m].icon}

@@ -22,11 +22,17 @@ class TransportMapRequest(BaseModel):
     use_lcc: bool = True
     viz_mode: Literal["geographic", "network_3d"] = "geographic"
     path_stop_ids: list[str] | None = None
+    # When set (station/hybrid map), station overlay shows only these stations and path connectors
+    path_station_ids: list[str] | None = None
     selected_stop_id: str | None = None
+    selected_station_id: str | None = None
     show_transfers: bool = False
     poi_radius_m: int = Field(default=300, ge=100, le=1000)
     poi_limit: int = Field(default=25, ge=5, le=200)
     poi_category_key: str | None = None  # "All" or amenity/shop/tourism/leisure
+    # Stop graph vs station overlay vs both (routing always uses underlying stop graph)
+    graph_viz_mode: Literal["stop", "station", "hybrid"] = "stop"
+    expanded_station_id: str | None = None
 
 
 class TransportMapResponse(BaseModel):
@@ -35,16 +41,24 @@ class TransportMapResponse(BaseModel):
 
 
 class TransportRouteRequest(BaseModel):
-    from_stop_id: str
-    to_stop_id: str
+    """Either stop endpoints (from_stop_id + to_stop_id) or station endpoints (from_station_id + to_station_id)."""
+
     mode: Literal["all", "metro", "rail", "tram", "bus", "other"] = "metro"
     use_lcc: bool = True
+    from_stop_id: str | None = None
+    to_stop_id: str | None = None
+    from_station_id: str | None = None
+    to_station_id: str | None = None
 
 
 class TransportRouteResponse(BaseModel):
     ok: bool
+    routing_scope: Literal["stop", "station"] | None = None
     path: list[str] | None = None
+    station_path: list[str] | None = None
+    station_names: list[str] | None = None
     result: dict[str, Any] | None = None
+    detail: dict[str, Any] | None = None
     error: dict[str, Any] | None = None
 
 

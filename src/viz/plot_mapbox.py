@@ -1014,6 +1014,33 @@ def _best_segment_between_points(
     return best_piece, best_feature
 
 
+def _span_to_zoom(max_span: float) -> float:
+    """Map geographic span (degrees) to Mapbox zoom (same scale as _center_and_zoom)."""
+    if max_span > 6.0:
+        return 5.8
+    if max_span > 3.0:
+        return 6.6
+    if max_span > 1.5:
+        return 7.5
+    if max_span > 0.8:
+        return 8.3
+    if max_span > 0.4:
+        return 9.2
+    if max_span > 0.2:
+        return 10.1
+    if max_span > 0.1:
+        return 11.0
+    if max_span > 0.05:
+        return 12.0
+    if max_span > 0.02:
+        return 13.2
+    if max_span > 0.01:
+        return 14.0
+    if max_span > 0.005:
+        return 14.8
+    return 15.2
+
+
 def _center_and_zoom(
     G: nx.Graph,
     *,
@@ -1042,25 +1069,50 @@ def _center_and_zoom(
     lat_span = max(lats) - min(lats)
     lon_span = max(lons) - min(lons)
     max_span = max(lat_span, lon_span)
-    if max_span > 6.0:
-        zoom = 5.8
-    elif max_span > 3.0:
-        zoom = 6.6
-    elif max_span > 1.5:
-        zoom = 7.5
-    elif max_span > 0.8:
-        zoom = 8.3
-    elif max_span > 0.4:
-        zoom = 9.2
-    elif max_span > 0.2:
-        zoom = 10.1
-    elif max_span > 0.1:
-        zoom = 11.0
-    else:
-        zoom = 12.3
+    zoom = _span_to_zoom(max_span)
     center = {
         "lat": (min(lats) + max(lats)) / 2.0,
         "lon": (min(lons) + max(lons)) / 2.0,
+    }
+    return center, zoom
+
+
+def _center_and_zoom_for_stop_path(
+    G: nx.Graph,
+    path: list[str] | None,
+) -> tuple[dict[str, float], float] | None:
+    """Center/zoom to bounding box of path stops (padding for short paths)."""
+    if not path:
+        return None
+    lats: list[float] = []
+    lons: list[float] = []
+    for sid in path:
+        sid = str(sid)
+        if sid not in G:
+            continue
+        pt = _node_lon_lat(G.nodes[sid])
+        if pt is None:
+            continue
+        lon, lat = pt
+        lats.append(lat)
+        lons.append(lon)
+    if not lats:
+        return None
+    min_lat, max_lat = min(lats), max(lats)
+    min_lon, max_lon = min(lons), max(lons)
+    pad_lat = max((max_lat - min_lat) * 0.12, 0.0018)
+    pad_lon = max((max_lon - min_lon) * 0.12, 0.0018)
+    min_lat -= pad_lat
+    max_lat += pad_lat
+    min_lon -= pad_lon
+    max_lon += pad_lon
+    lat_span = max_lat - min_lat
+    lon_span = max_lon - min_lon
+    max_span = max(lat_span, lon_span, 1e-6)
+    zoom = _span_to_zoom(max_span)
+    center = {
+        "lat": (min_lat + max_lat) / 2.0,
+        "lon": (min_lon + max_lon) / 2.0,
     }
     return center, zoom
 
@@ -1638,6 +1690,13 @@ def render_mapbox_gl_html(
     height_px: int = 700,
     overlay_controls_html: str = "",
     selected_stop_id: str | None = None,
+    selected_station_id: str | None = None,
+    graph_viz_mode: str = "stop",
+    expanded_station_id: str | None = None,
+    station_network_points: dict[str, Any] | None = None,
+    station_network_lines: dict[str, Any] | None = None,
+    suppress_stop_markers: bool = False,
+    suppress_base_network: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     active_render_graph = _active_render_graph_for_mode(mode, render_graphs_by_mode)
     center, zoom = _center_and_zoom(G, render_nodes=None if active_render_graph is None else active_render_graph.get("nodes"))
@@ -1647,6 +1706,8 @@ def render_mapbox_gl_html(
         render_graphs_by_mode=render_graphs_by_mode,
     
     )
+    if suppress_base_network:
+        network_source = {"type": "FeatureCollection", "features": []}
     path_source, path_debug = _path_feature_collection(G, path, mode, line_geometries)
     stations_source = _stations_feature_collection(
         G,
@@ -1659,9 +1720,15 @@ def render_mapbox_gl_html(
         poi_category_value=poi_category_value,
         selected_stop_id=selected_stop_id,
     )
+    if suppress_stop_markers:
+        stations_source = {"type": "FeatureCollection", "features": []}
+
+    empty_fc: dict[str, Any] = {"type": "FeatureCollection", "features": []}
+    st_pts = station_network_points if isinstance(station_network_points, dict) else empty_fc
+    st_lines = station_network_lines if isinstance(station_network_lines, dict) else empty_fc
 
     transfer_features: list[dict[str, Any]] = []
-    if show_transfers:
+    if show_transfers and not suppress_base_network:
         transfer_pairs = [
             (str(u), str(v))
             for u, v, data in G.edges(data=True)
@@ -1701,6 +1768,11 @@ def render_mapbox_gl_html(
         "path": path_source,
         "stations": stations_source,
         "transfers": {"type": "FeatureCollection", "features": transfer_features},
+        "station_network_points": st_pts,
+        "station_network_lines": st_lines,
+        "graph_viz_mode": graph_viz_mode or "stop",
+        "selected_station_id": (selected_station_id or "").strip() or None,
+        "expanded_station_id": (expanded_station_id or "").strip() or None,
         "clicked_pois": {"type": "FeatureCollection", "features": []},
         "height_px": int(height_px),
         "paris_mask_feature": None,
@@ -1725,6 +1797,14 @@ def render_mapbox_gl_html(
         )
     except (FileNotFoundError, ValueError, OSError, json.JSONDecodeError) as exc:
         log_event(LOGGER, "paris_mask_skipped", error=str(exc))
+
+    path_fit = _center_and_zoom_for_stop_path(G, path if path else None)
+    if path_fit:
+        c_fit, z_fit = path_fit
+        map_payload["center"] = c_fit
+        map_payload["zoom"] = z_fit
+        map_payload["paris_max_bounds"] = None
+
     log_event(
         LOGGER,
         "render_mapbox_payload_built",
@@ -2306,6 +2386,8 @@ def render_mapbox_gl_html(
       map.addSource('path-lines', {{ type: 'geojson', data: payload.path }});
       map.addSource('stations', {{ type: 'geojson', data: payload.stations }});
       map.addSource('transfer-lines', {{ type: 'geojson', data: payload.transfers }});
+      map.addSource('station-net-lines', {{ type: 'geojson', data: payload.station_network_lines }});
+      map.addSource('station-net-points', {{ type: 'geojson', data: payload.station_network_points }});
 
       map.addLayer({{
         id: 'network-lines',
@@ -2341,6 +2423,18 @@ def render_mapbox_gl_html(
       }});
 
       map.addLayer({{
+        id: 'station-net-lines',
+        type: 'line',
+        source: 'station-net-lines',
+        paint: {{
+          'line-color': '#a78bfa',
+          'line-width': 1.3,
+          'line-opacity': 0.4,
+          'line-dasharray': [1.5, 2]
+        }}
+      }});
+
+      map.addLayer({{
         id: 'stations',
         type: 'circle',
         source: 'stations',
@@ -2350,6 +2444,34 @@ def render_mapbox_gl_html(
           'circle-opacity': 0.8,
           'circle-stroke-width': 1,
           'circle-stroke-color': '#ffffff'
+        }}
+      }});
+
+      map.addLayer({{
+        id: 'station-net-points',
+        type: 'circle',
+        source: 'station-net-points',
+        paint: {{
+          'circle-color': [
+            'case',
+            ['==', ['get', 'is_selected'], true],
+            '#f472b6',
+            '#c4b5fd'
+          ],
+          'circle-radius': [
+            'case',
+            ['==', ['get', 'is_selected'], true],
+            14,
+            9
+          ],
+          'circle-opacity': 0.85,
+          'circle-stroke-width': [
+            'case',
+            ['==', ['get', 'is_selected'], true],
+            2.2,
+            1.5
+          ],
+          'circle-stroke-color': '#ede9fe'
         }}
       }});
 

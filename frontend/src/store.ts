@@ -52,7 +52,11 @@ type State = {
   transportGraphMode: TransportMode;
   transportUseLcc: boolean;
   transportViz: "geographic" | "network_3d";
+  /** Map overlay: underlying routing always uses stop graph */
+  transportGraphViz: "stop" | "station" | "hybrid";
   transportPathIds: string[] | null;
+  /** When a route is active, station overlay can be limited to this sequence */
+  transportStationPathIds: string[] | null;
   transportShowTransfers: boolean;
   transportMapBlobUrl: string | null;
   transportStats: { nodes: number; edges: number } | null;
@@ -67,7 +71,9 @@ type State = {
   setTransportGraphMode: (m: TransportMode) => void;
   setTransportUseLcc: (v: boolean) => void;
   setTransportViz: (v: "geographic" | "network_3d") => void;
+  setTransportGraphViz: (v: "stop" | "station" | "hybrid") => void;
   setTransportPathIds: (p: string[] | null) => void;
+  setTransportStationPathIds: (p: string[] | null) => void;
   setTransportShowTransfers: (v: boolean) => void;
   setTransportMapBlobUrl: (url: string | null) => void;
   setTransportStats: (s: { nodes: number; edges: number } | null) => void;
@@ -89,7 +95,9 @@ export const useAppStore = create<State>((set) => ({
   transportGraphMode: "metro",
   transportUseLcc: false,
   transportViz: "geographic",
+  transportGraphViz: "station",
   transportPathIds: null,
+  transportStationPathIds: null,
   transportShowTransfers: false,
   transportMapBlobUrl: null,
   transportStats: null,
@@ -125,7 +133,9 @@ export const useAppStore = create<State>((set) => ({
   setTransportGraphMode: (m) => set({ transportGraphMode: m }),
   setTransportUseLcc: (v) => set({ transportUseLcc: v }),
   setTransportViz: (v) => set({ transportViz: v }),
+  setTransportGraphViz: (v) => set({ transportGraphViz: v }),
   setTransportPathIds: (p) => set({ transportPathIds: p }),
+  setTransportStationPathIds: (p) => set({ transportStationPathIds: p }),
   setTransportShowTransfers: (v) => set({ transportShowTransfers: v }),
   setTransportMapBlobUrl: (url) => set({ transportMapBlobUrl: url }),
   setTransportStats: (st) => set({ transportStats: st }),

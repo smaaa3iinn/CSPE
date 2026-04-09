@@ -40,7 +40,7 @@ export function VisualBoardMode() {
 
           <div className="panel-title">Information</div>
           {summary ? (
-            <p style={{ whiteSpace: "pre-wrap", fontSize: 13, margin: "0 0 16px", color: "rgba(220,235,250,0.92)" }}>
+            <p style={{ whiteSpace: "pre-wrap", fontSize: 13, margin: "0 0 16px", color: "rgba(226,232,240,0.92)" }}>
               {summary}
             </p>
           ) : (
@@ -60,10 +60,10 @@ export function VisualBoardMode() {
                   style={{
                     marginBottom: 10,
                     paddingBottom: 10,
-                    borderBottom: "1px solid rgba(94, 234, 212, 0.12)",
+                    borderBottom: "1px solid rgba(148, 163, 184, 0.15)",
                   }}
                 >
-                  {p.title && <div style={{ fontWeight: 600, fontSize: 12, color: "#e8f2ff", marginBottom: 4 }}>{p.title}</div>}
+                  {p.title && <div style={{ fontWeight: 600, fontSize: 12, color: "#e2e8f0", marginBottom: 4 }}>{p.title}</div>}
                   {p.query && <p className="muted" style={{ margin: 0, fontSize: 11, lineHeight: 1.4 }}>{p.query}</p>}
                 </div>
               ))}
