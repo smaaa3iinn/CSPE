@@ -22,6 +22,7 @@ def post_transport_map(body: TransportMapRequest) -> TransportMapResponse:
             use_lcc=body.use_lcc,
             viz_mode=body.viz_mode,
             path_stop_ids=body.path_stop_ids,
+            selected_stop_id=body.selected_stop_id,
             show_transfers=body.show_transfers,
             poi_radius_m=body.poi_radius_m,
             poi_limit=body.poi_limit,

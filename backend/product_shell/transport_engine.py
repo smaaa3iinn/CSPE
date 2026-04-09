@@ -87,10 +87,10 @@ def _poi_lookup():
 
 
 def default_basemap_style() -> str:
-    from src.viz.plot_mapbox import normalize_mapbox_style_url
+    from src.viz.plot_mapbox import DEFAULT_MAPBOX_BASEMAP_STYLE, normalize_mapbox_style_url
 
     return normalize_mapbox_style_url(
-        os.getenv("MAPBOX_STYLE_URL", "").strip() or "mapbox://styles/smaaa3iin/cmnkb703u002001sh48945ojt"
+        os.getenv("MAPBOX_STYLE_URL", "").strip() or DEFAULT_MAPBOX_BASEMAP_STYLE
     )
 
 
@@ -108,6 +108,7 @@ def render_transport_map_html(
     use_lcc: bool,
     viz_mode: str,
     path_stop_ids: list[str] | None,
+    selected_stop_id: str | None = None,
     show_transfers: bool,
     poi_radius_m: int,
     poi_limit: int,
@@ -125,11 +126,14 @@ def render_transport_map_html(
     pitched = viz_mode == "network_3d"
     cat = None if not poi_category_key or poi_category_key == "All" else poi_category_key
 
+    sel = (selected_stop_id or "").strip() or None
+
     map_html, _dbg = render_mapbox_gl_html(
         G,
         mapbox_token=token,
         mode=mode,
         path=path_stop_ids,
+        selected_stop_id=sel,
         show_transfers=show_transfers,
         title=f"Mode: {mode} {'(LCC)' if use_lcc else ''}",
         basemap_style=default_basemap_style(),

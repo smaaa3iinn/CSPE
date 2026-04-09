@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getTransportStats, postRoute, postTransportMap, searchStops } from "../api/client";
 import { useAppStore } from "../store";
+import "./transport.css";
+
+const GRAPH_MODES = ["all", "metro", "rail", "tram", "bus", "other"] as const;
 
 export function TransportMode() {
   const graphMode = useAppStore((s) => s.transportGraphMode);
@@ -33,28 +36,41 @@ export function TransportMode() {
   const [suggestions, setSuggestions] = useState<{ stop_id: string; stop_name?: string; line?: string }[]>([]);
   const searchQ = routeFocus === "start" ? qStart : qEnd;
 
-  const refreshMap = useCallback(async () => {
-    setLoadingMap(true);
-    setMapErr(null);
-    try {
-      const { html } = await postTransportMap({
-        mode: graphMode,
-        use_lcc: useLcc,
-        viz_mode: viz,
-        path_stop_ids: pathIds,
-        show_transfers: showTransfers,
-      });
-      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      if (prevUrl.current) URL.revokeObjectURL(prevUrl.current);
-      prevUrl.current = url;
-      setMapUrl(url);
-    } catch (e) {
-      setMapErr(e instanceof Error ? e.message : "Map failed");
-    } finally {
-      setLoadingMap(false);
-    }
-  }, [graphMode, useLcc, viz, pathIds, showTransfers]);
+  const [dockTab, setDockTab] = useState<"route" | "search">("route");
+  const [stopLookupQ, setStopLookupQ] = useState("");
+  const [stopLookupErr, setStopLookupErr] = useState<string | null>(null);
+  const [mapSelectedStopId, setMapSelectedStopId] = useState<string | null>(null);
+
+  const autocompleteQ = dockTab === "search" ? stopLookupQ : searchQ;
+
+  const refreshMap = useCallback(
+    async (opts?: { selectedStopId?: string | null }) => {
+      const selected =
+        opts && "selectedStopId" in opts ? opts.selectedStopId ?? null : mapSelectedStopId;
+      setLoadingMap(true);
+      setMapErr(null);
+      try {
+        const { html } = await postTransportMap({
+          mode: graphMode,
+          use_lcc: useLcc,
+          viz_mode: viz,
+          path_stop_ids: pathIds,
+          show_transfers: showTransfers,
+          ...(selected ? { selected_stop_id: selected } : {}),
+        });
+        const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        if (prevUrl.current) URL.revokeObjectURL(prevUrl.current);
+        prevUrl.current = url;
+        setMapUrl(url);
+      } catch (e) {
+        setMapErr(e instanceof Error ? e.message : "Map failed");
+      } finally {
+        setLoadingMap(false);
+      }
+    },
+    [graphMode, useLcc, viz, pathIds, showTransfers, mapSelectedStopId]
+  );
 
   useEffect(() => {
     void refreshMap();
@@ -74,7 +90,7 @@ export function TransportMode() {
   useEffect(() => {
     const t = window.setTimeout(() => {
       void (async () => {
-        const q = searchQ.trim();
+        const q = autocompleteQ.trim();
         if (q.length < 2) {
           setSuggestions([]);
           return;
@@ -88,7 +104,7 @@ export function TransportMode() {
       })();
     }, 200);
     return () => window.clearTimeout(t);
-  }, [searchQ, graphMode, useLcc]);
+  }, [autocompleteQ, graphMode, useLcc]);
 
   async function computeRoute() {
     setRouteErr(null);
@@ -131,160 +147,257 @@ export function TransportMode() {
     setRouteMeta(null);
   }
 
+  async function searchStopOnMap() {
+    setStopLookupErr(null);
+    const q = stopLookupQ.trim();
+    if (q.length < 2) {
+      setStopLookupErr("Type at least 2 characters.");
+      return;
+    }
+    try {
+      const r = await searchStops(q, graphMode, useLcc);
+      const first = r.matches[0];
+      if (!first) {
+        setStopLookupErr("No stop found for that query.");
+        setMapSelectedStopId(null);
+        void refreshMap({ selectedStopId: null });
+        return;
+      }
+      setMapSelectedStopId(first.stop_id);
+      setStopLookupQ(`${first.stop_name ?? first.stop_id} | ${first.stop_id}`);
+      setSuggestions([]);
+      void refreshMap({ selectedStopId: first.stop_id });
+    } catch {
+      setStopLookupErr("Search failed.");
+    }
+  }
+
+  function clearMapStopHighlight() {
+    setStopLookupErr(null);
+    setMapSelectedStopId(null);
+    setStopLookupQ("");
+    void refreshMap({ selectedStopId: null });
+  }
+
   return (
-    <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-      <main style={{ flex: 1, minWidth: 0, position: "relative", background: "#0a0c0f" }}>
-        {loadingMap && (
-          <div className="muted" style={{ position: "absolute", top: 12, left: 12, zIndex: 2 }}>
-            Loading map…
-          </div>
-        )}
+    <div className="transport-root">
+      <div className="transport-map-wrap">
+        {loadingMap && <div className="transport-map-loading">Loading map…</div>}
         {mapErr && (
-          <div style={{ color: "var(--danger)", padding: 16 }}>
+          <div className="transport-map-err">
             <strong>Map</strong>
-            <p>{mapErr}</p>
+            <p style={{ margin: "8px 0 0" }}>{mapErr}</p>
           </div>
         )}
-        {mapUrl && (
-          <iframe title="Transport map" src={mapUrl} style={{ width: "100%", height: "100%", border: "none" }} />
-        )}
-      </main>
-      <aside
-        style={{
-          width: "var(--right-w)",
-          borderLeft: "1px solid var(--border)",
-          background: "var(--bg-elevated)",
-          overflowY: "auto",
-          padding: 14,
-        }}
-      >
-        <div className="panel-title">Graph</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
-          <label className="muted">
-            Mode
-            <select
-              style={{ width: "100%", marginTop: 4 }}
-              value={graphMode}
-              onChange={(e) => setGraphMode(e.target.value as typeof graphMode)}
+        {mapUrl && <iframe title="Transport map" src={mapUrl} />}
+      </div>
+
+      <div className="transport-left-stack">
+        <div className="transport-float transport-float--stack-panel">
+          <div className="transport-section-label">Visualization</div>
+          <div className="transport-pill-row">
+            <button
+              type="button"
+              className={`transport-btn-viz${viz === "geographic" ? " active" : ""}`}
+              onClick={() => setViz("geographic")}
             >
-              {(["all", "metro", "rail", "tram", "bus", "other"] as const).map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="muted" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <input type="checkbox" checked={useLcc} onChange={(e) => setUseLcc(e.target.checked)} />
-            Largest connected component
-          </label>
-          <label className="muted">
-            Visualization
-            <select
-              style={{ width: "100%", marginTop: 4 }}
-              value={viz}
-              onChange={(e) => setViz(e.target.value as typeof viz)}
+              Geographic
+            </button>
+            <button
+              type="button"
+              className={`transport-btn-viz${viz === "network_3d" ? " active" : ""}`}
+              onClick={() => setViz("network_3d")}
             >
-              <option value="geographic">Geographic Mapbox</option>
-              <option value="network_3d">3D network</option>
-            </select>
-          </label>
-          <label className="muted" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <input type="checkbox" checked={showTransfers} onChange={(e) => setShowTransfers(e.target.checked)} />
-            Show transfers on map
-          </label>
-          <button type="button" onClick={() => void refreshMap()}>
+              3D network
+            </button>
+          </div>
+
+          <div className="transport-section-label">Mode</div>
+          <div className="transport-mode-grid">
+            {GRAPH_MODES.map((m) => (
+              <button
+                key={m}
+                type="button"
+                className={`transport-btn-mode${graphMode === m ? " active" : ""}`}
+                onClick={() => setGraphMode(m)}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+
+          <button type="button" className="transport-btn-refresh" onClick={() => void refreshMap()}>
             Refresh map
           </button>
         </div>
 
-        <div className="panel-title">Network stats</div>
-        {stats ? (
-          <p style={{ marginTop: 0 }}>
-            Nodes <strong>{stats.nodes}</strong>
-            <br />
-            Edges <strong>{stats.edges}</strong>
-          </p>
-        ) : (
-          <p className="muted">Unavailable</p>
-        )}
+        <div className="transport-float transport-float--stack-panel transport-float--stack-panel--scroll">
+          <div className="transport-section-label" style={{ marginTop: 0 }}>
+            Graph
+          </div>
+          <div className="transport-graph-toggles">
+            <button
+              type="button"
+              className={`transport-toggle-btn${useLcc ? " transport-toggle-btn--on" : ""}`}
+              aria-pressed={useLcc}
+              onClick={() => setUseLcc(!useLcc)}
+            >
+              Largest connected component
+            </button>
+            <button
+              type="button"
+              className={`transport-toggle-btn${showTransfers ? " transport-toggle-btn--on" : ""}`}
+              aria-pressed={showTransfers}
+              onClick={() => setShowTransfers(!showTransfers)}
+            >
+              Show transfer edges
+            </button>
+          </div>
 
-        <div className="panel-title" style={{ marginTop: 20 }}>
-          Route
+          <section className="transport-network-stats" aria-label="Network statistics">
+            <div className="transport-section-label">Network stats</div>
+            {stats ? (
+              <div className="transport-network-stats__grid">
+                <div className="transport-network-stats__col">
+                  <span className="transport-network-stats__label">Nodes</span>
+                  <span className="transport-network-stats__value">{stats.nodes}</span>
+                </div>
+                <div className="transport-network-stats__col">
+                  <span className="transport-network-stats__label">Edges</span>
+                  <span className="transport-network-stats__value">{stats.edges}</span>
+                </div>
+              </div>
+            ) : (
+              <p className="transport-network-stats__empty">Stats unavailable</p>
+            )}
+          </section>
+
+          <div className="transport-section-label">Route</div>
+          <p className="transport-hint">Use the bar below: search stops, pick from list, then Compute.</p>
+          {(startId || endId) && (
+            <div className="transport-ids">
+              {startId && <div>Start: {startId}</div>}
+              {endId && <div>End: {endId}</div>}
+            </div>
+          )}
+          {routeMeta && <div className="transport-route-meta">{routeMeta}</div>}
+          {routeErr && <div className="transport-route-err">{routeErr}</div>}
         </div>
-        <p className="muted">Type to search; pick from the list for start and end.</p>
-        <input
-          placeholder="Start stop…"
-          value={qStart}
-          onFocus={() => setRouteFocus("start")}
-          onChange={(e) => setQStart(e.target.value)}
-          style={{ width: "100%", marginBottom: 6 }}
-        />
-        <input
-          placeholder="End stop…"
-          value={qEnd}
-          onFocus={() => setRouteFocus("end")}
-          onChange={(e) => setQEnd(e.target.value)}
-          style={{ width: "100%", marginBottom: 6 }}
-        />
-        {suggestions.length > 0 && (
-          <div
-            style={{
-              border: "1px solid var(--border)",
-              borderRadius: 6,
-              maxHeight: 140,
-              overflowY: "auto",
-              marginBottom: 8,
+      </div>
+
+      {suggestions.length > 0 && (
+        <div className="transport-suggest-layer" role="listbox">
+          {suggestions.map((s) => (
+            <button
+              key={`${dockTab}-${routeFocus}-${s.stop_id}`}
+              type="button"
+              className="transport-suggest-item"
+              onClick={() => {
+                if (dockTab === "search") {
+                  setMapSelectedStopId(s.stop_id);
+                  setStopLookupQ(`${s.stop_name ?? s.stop_id} | ${s.stop_id}`);
+                  setStopLookupErr(null);
+                  setSuggestions([]);
+                  void refreshMap({ selectedStopId: s.stop_id });
+                } else if (routeFocus === "start") {
+                  setStartId(s.stop_id);
+                  setQStart(`${s.stop_name ?? s.stop_id} | ${s.stop_id}`);
+                  setSuggestions([]);
+                } else {
+                  setEndId(s.stop_id);
+                  setQEnd(`${s.stop_name ?? s.stop_id} | ${s.stop_id}`);
+                  setSuggestions([]);
+                }
+              }}
+            >
+              {s.stop_name ?? s.stop_id} ({s.stop_id})
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="transport-dock-cluster" aria-label="Route and search dock">
+        <div className="transport-dock-main">
+          {dockTab === "route" ? (
+            <div className="transport-dock-row">
+              <input
+                className="transport-dock-input"
+                placeholder="Start stop"
+                value={qStart}
+                onFocus={() => setRouteFocus("start")}
+                onChange={(e) => setQStart(e.target.value)}
+                aria-label="Start stop search"
+              />
+              <input
+                className="transport-dock-input"
+                placeholder="End stop"
+                value={qEnd}
+                onFocus={() => setRouteFocus("end")}
+                onChange={(e) => setQEnd(e.target.value)}
+                aria-label="End stop search"
+              />
+              <button type="button" className="transport-btn-compute" onClick={() => void computeRoute()}>
+                Compute
+              </button>
+              <button type="button" className="transport-btn-clear" onClick={clearRoute}>
+                Clear
+              </button>
+            </div>
+          ) : (
+            <div className="transport-dock-row transport-dock-row--search">
+              <input
+                className="transport-dock-input"
+                placeholder="Search by stop name or ID"
+                value={stopLookupQ}
+                onChange={(e) => setStopLookupQ(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void searchStopOnMap();
+                  }
+                }}
+                aria-label="Find stop on map"
+              />
+              <button type="button" className="transport-btn-compute" onClick={() => void searchStopOnMap()}>
+                Search
+              </button>
+              <button type="button" className="transport-btn-clear" onClick={clearMapStopHighlight}>
+                Clear highlight
+              </button>
+              {stopLookupErr && <span className="transport-dock-search-err">{stopLookupErr}</span>}
+              {mapSelectedStopId && !stopLookupErr && (
+                <span className="transport-dock-search-ok">Selected: {mapSelectedStopId}</span>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="transport-dock-mode-rail" role="tablist" aria-label="Dock mode">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={dockTab === "route"}
+            className={`transport-dock-tab transport-dock-tab--rail${dockTab === "route" ? " transport-dock-tab--active" : ""}`}
+            onClick={() => {
+              setDockTab("route");
+              setSuggestions([]);
             }}
           >
-            {suggestions.map((s) => (
-              <button
-                key={`${routeFocus}-${s.stop_id}`}
-                type="button"
-                className="ghost"
-                onClick={() => {
-                  if (routeFocus === "start") {
-                    setStartId(s.stop_id);
-                    setQStart(`${s.stop_name ?? s.stop_id} | ${s.stop_id}`);
-                  } else {
-                    setEndId(s.stop_id);
-                    setQEnd(`${s.stop_name ?? s.stop_id} | ${s.stop_id}`);
-                  }
-                  setSuggestions([]);
-                }}
-                style={{
-                  display: "block",
-                  width: "100%",
-                  textAlign: "left",
-                  border: "none",
-                  borderBottom: "1px solid var(--border)",
-                  borderRadius: 0,
-                  fontSize: 12,
-                }}
-              >
-                {s.stop_name ?? s.stop_id} ({s.stop_id})
-              </button>
-            ))}
-          </div>
-        )}
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button type="button" className="primary" onClick={() => void computeRoute()}>
-            Compute
+            Route
           </button>
-          <button type="button" onClick={clearRoute}>
-            Clear
+          <button
+            type="button"
+            role="tab"
+            aria-selected={dockTab === "search"}
+            className={`transport-dock-tab transport-dock-tab--rail${dockTab === "search" ? " transport-dock-tab--active" : ""}`}
+            onClick={() => {
+              setDockTab("search");
+              setSuggestions([]);
+            }}
+          >
+            Search stop
           </button>
         </div>
-        {(startId || endId) && (
-          <p className="muted" style={{ marginTop: 8 }}>
-            {startId && <>Start: {startId}</>}
-            {startId && endId && <br />}
-            {endId && <>End: {endId}</>}
-          </p>
-        )}
-        {routeMeta && <p style={{ marginTop: 8 }}>{routeMeta}</p>}
-        {routeErr && <p style={{ color: "var(--danger)", marginTop: 8 }}>{routeErr}</p>}
-      </aside>
+      </div>
     </div>
   );
 }

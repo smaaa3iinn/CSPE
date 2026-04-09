@@ -1,0 +1,169 @@
+/* Right rail: Atlas chat (shared across modes; sits over main content) */
+
+.atlas-rail.transport-float--br {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.atlas-rail__head {
+  flex-shrink: 0;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(94, 234, 212, 0.18);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(200, 225, 240, 0.9);
+}
+
+.atlas-rail__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.atlas-rail__bubble {
+  max-width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(94, 234, 212, 0.2);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.atlas-rail__bubble--user {
+  align-self: flex-end;
+  background: rgba(59, 130, 246, 0.18);
+  border-color: rgba(59, 130, 246, 0.35);
+  color: rgba(238, 242, 255, 0.95);
+}
+
+.atlas-rail__bubble--assistant {
+  align-self: flex-start;
+  background: rgba(15, 23, 42, 0.65);
+  color: rgba(226, 238, 248, 0.95);
+}
+
+.atlas-rail__voice-strip {
+  flex-shrink: 0;
+  padding: 8px 10px;
+  margin: 0 -4px 4px;
+  border-radius: 8px;
+  background: rgba(34, 211, 238, 0.08);
+  border: 1px solid rgba(34, 211, 238, 0.22);
+  font-size: 11px;
+}
+
+.atlas-rail__voice-strip .atlas-rail__pill {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(148, 180, 200, 0.9);
+  margin-bottom: 4px;
+}
+
+.atlas-rail__voice-line {
+  white-space: pre-wrap;
+  color: rgba(220, 235, 250, 0.92);
+  min-height: 1.2em;
+}
+
+.atlas-rail__foot {
+  flex-shrink: 0;
+  border-top: 1px solid rgba(94, 234, 212, 0.18);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.atlas-rail__row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.atlas-rail__input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(94, 234, 212, 0.22);
+  background: rgba(8, 12, 20, 0.75);
+  color: rgba(238, 242, 255, 0.95);
+}
+
+.atlas-rail__input:focus {
+  outline: none;
+  border-color: rgba(34, 211, 238, 0.45);
+}
+
+.atlas-rail__send {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(34, 211, 238, 0.45);
+  background: linear-gradient(180deg, rgba(34, 211, 238, 0.22), rgba(6, 182, 212, 0.28));
+  color: #ecfeff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.atlas-rail__send:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.atlas-rail__hold {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(94, 234, 212, 0.35);
+  background: rgba(10, 14, 22, 0.75);
+  color: rgba(200, 220, 240, 0.95);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  user-select: none;
+  touch-action: none;
+}
+
+.atlas-rail__hold:hover {
+  border-color: rgba(34, 211, 238, 0.5);
+  background: rgba(34, 211, 238, 0.1);
+}
+
+.atlas-rail__hold--active {
+  border-color: rgba(248, 113, 113, 0.55);
+  background: rgba(248, 113, 113, 0.15);
+  color: #fecaca;
+}
+
+.atlas-rail__hint {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.35;
+  color: rgba(148, 163, 184, 0.85);
+}
+
+.atlas-rail__err {
+  margin: 0;
+  font-size: 11px;
+  color: #fca5a5;
+}

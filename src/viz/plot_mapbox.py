@@ -35,6 +35,10 @@ def normalize_mapbox_style_url(style: str) -> str:
     return s
 
 
+# Default basemap when MAPBOX_STYLE_URL is unset (Mapbox template style, not a custom Studio style).
+DEFAULT_MAPBOX_BASEMAP_STYLE = "mapbox://styles/mapbox/dark-v11"
+
+
 MODE_COLORS = {
     "bus": "#2563eb",
     "tram": "#db2777",
@@ -190,6 +194,18 @@ def _poi_badge_style(category: Any, category_type: Any) -> dict[str, str]:
         "color": style["color"],
         "icon_class": style["icon_class"],
     }
+
+
+def _poi_badge_from_row(category: Any, category_type: Any, stored_family: Any) -> dict[str, str]:
+    """Prefer `family` from poi.parquet when category_key/value are blank (common in normalized data)."""
+    sf = str(stored_family or "").strip().lower()
+    if sf in POI_BADGE_STYLES:
+        st = POI_BADGE_STYLES[sf]
+        return {"family": sf, "color": st["color"], "icon_class": st["icon_class"]}
+    if sf == "other":
+        st = POI_BADGE_STYLES["services"]
+        return {"family": "other", "color": st["color"], "icon_class": st["icon_class"]}
+    return _poi_badge_style(category, category_type)
 
 
 def _text_color_for_background(hex_color: str) -> str:
@@ -753,11 +769,12 @@ def _poi_card_html(row: dict[str, Any]) -> str:
     category = str(row.get("category") or "")
     category_type = str(row.get("type") or "")
     distance_m = float(row.get("distance_m") or 0.0)
-    badge = _poi_badge_style(category, category_type)
-    family = str(badge["family"]).replace("_", " ").title()
-    type_label = category_type.replace("_", " ").title() if category_type else family
+    badge = _poi_badge_from_row(category, category_type, row.get("family"))
+    family_key = str(badge["family"])
+    family = "Other" if family_key == "other" else family_key.replace("_", " ").title()
+    type_label = category_type.replace("_", " ").title() if category_type else ""
     meta_parts = [family]
-    if type_label and type_label != family:
+    if type_label and type_label.lower() != family.lower():
         meta_parts.append(type_label)
     meta_parts.append(f"{distance_m:.0f} m")
     meta_text = " | ".join(meta_parts)
@@ -878,7 +895,7 @@ def _nearby_pois_for_station(
             "lat": float(row["lat"]),
             "lon": float(row["lon"]),
             "distance_m": float(row["distance_m"]),
-            **_poi_badge_style(row.get("category"), row.get("type")),
+            **_poi_badge_from_row(row.get("category"), row.get("type"), row.get("family")),
         }
         for row in rows
     ]
@@ -1432,7 +1449,7 @@ def plot_graph_mapbox(
         legend={"orientation": "h", "yanchor": "bottom", "y": 1.01, "xanchor": "left", "x": 0.0},
         mapbox={
             "accesstoken": mapbox_token,
-            "style": "mapbox://styles/smaaa3iin/cmnkb703u002001sh48945ojt",
+            "style": DEFAULT_MAPBOX_BASEMAP_STYLE,
             "center": center,
             "zoom": zoom,
         },
@@ -1470,6 +1487,7 @@ def _stations_feature_collection(
     poi_limit: int = 8,
     poi_category_key: str | None = None,
     poi_category_value: str | None = None,
+    selected_stop_id: str | None = None,
 ) -> dict[str, Any]:
     features: list[dict[str, Any]] = []
     lightweight_popups = render_graph is not None and len(render_graph.get("nodes", [])) > 5000
@@ -1488,6 +1506,8 @@ def _stations_feature_collection(
             node_rows.append((sid, attrs, render_node))
     else:
         node_rows = [(str(node), dict(attrs), None) for node, attrs in G.nodes(data=True)]
+
+    sel = (selected_stop_id or "").strip() or None
 
     for sid, attrs, render_node in node_rows:
         point = _node_lon_lat(attrs)
@@ -1522,6 +1542,8 @@ def _stations_feature_collection(
                 poi_category_value=poi_category_value,
             )
             nearby_pois_json = json.dumps(nearby_pois, ensure_ascii=True, separators=(",", ":"))
+        base_r = _station_radius(G, sid, attrs)
+        is_sel = bool(sel and sid == sel)
         features.append(
             {
                 "type": "Feature",
@@ -1542,8 +1564,8 @@ def _stations_feature_collection(
                     "connections": _station_degree(G, sid, attrs),
                     "visible_mode": visible_mode,
                     "render_popup_mode": "light" if lightweight_popups else "full",
-                    "color": MODE_COLORS.get(visible_mode, MODE_COLORS["other"]),
-                    "radius": _station_radius(G, sid, attrs),
+                    "color": MODE_COLORS["selected"] if is_sel else MODE_COLORS.get(visible_mode, MODE_COLORS["other"]),
+                    "radius": max(base_r * 1.45, 12.0) if is_sel else base_r,
                 },
             }
         )
@@ -1603,7 +1625,7 @@ def render_mapbox_gl_html(
     path: list[str] | None = None,
     show_transfers: bool = False,
     title: str = "",
-    basemap_style: str = "mapbox://styles/smaaa3iin/cmnkb703u002001sh48945ojt",
+    basemap_style: str = DEFAULT_MAPBOX_BASEMAP_STYLE,
     line_geometries: dict[str, Any] | None = None,
     render_graphs_by_mode: dict[str, dict[str, Any]] | None = None,
     poi_lookup: LocalPOILookup | None = None,
@@ -1615,6 +1637,7 @@ def render_mapbox_gl_html(
     show_3d_buildings: bool = False,
     height_px: int = 700,
     overlay_controls_html: str = "",
+    selected_stop_id: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     active_render_graph = _active_render_graph_for_mode(mode, render_graphs_by_mode)
     center, zoom = _center_and_zoom(G, render_nodes=None if active_render_graph is None else active_render_graph.get("nodes"))
@@ -1634,6 +1657,7 @@ def render_mapbox_gl_html(
         poi_limit=poi_limit,
         poi_category_key=poi_category_key,
         poi_category_value=poi_category_value,
+        selected_stop_id=selected_stop_id,
     )
 
     transfer_features: list[dict[str, Any]] = []

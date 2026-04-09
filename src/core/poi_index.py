@@ -51,11 +51,18 @@ class LocalPOILookup:
                 "Unsupported POI parquet schema. Expected columns "
                 "`id`, `name`, `category_key`, `category_value`, `lat`, and `lon`."
             )
-        df = df[["id", "name", "category_key", "category_value", "lat", "lon"]].copy()
+        cols = ["id", "name", "category_key", "category_value", "lat", "lon"]
+        if "family" in df.columns:
+            cols.append("family")
+        df = df[cols].copy()
         df = df.dropna(subset=["lat", "lon"]).copy()
         df["name"] = df["name"].fillna("").astype(str)
         df["category_key"] = df["category_key"].fillna("").astype(str)
         df["category_value"] = df["category_value"].fillna("").astype(str)
+        if "family" not in df.columns:
+            df["family"] = ""
+        else:
+            df["family"] = df["family"].fillna("").astype(str)
         df["lat"] = df["lat"].astype(float)
         df["lon"] = df["lon"].astype(float)
         df = df.reset_index(drop=True)
@@ -115,6 +122,7 @@ class LocalPOILookup:
                     float(row["lat"]),
                     float(row["lon"]),
                     float(distance_m),
+                    str(row["family"]),
                 )
             )
             if limit is not None and len(results) >= limit:
@@ -148,8 +156,9 @@ class LocalPOILookup:
                 "lat": poi_lat,
                 "lon": poi_lon,
                 "distance_m": distance_m,
+                "family": family_value,
             }
-            for name, category_key_value, category_value_value, poi_lat, poi_lon, distance_m in rows
+            for name, category_key_value, category_value_value, poi_lat, poi_lon, distance_m, family_value in rows
         ]
 
 

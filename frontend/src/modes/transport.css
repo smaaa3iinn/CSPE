@@ -1,0 +1,533 @@
+/* Transport map shell — floating HUD over full-bleed map */
+
+.transport-root {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  background: #0b0e14;
+  overflow: hidden;
+  /* Dock/suggestions: left = inset from main column (ToolRail is outside this subtree); right = clear BR float */
+  --transport-tl-left: 16px;
+  --transport-tl-w: min(calc(140px * 1.5 * 1.5), calc(100% - 32px));
+  --transport-br-right: 14px;
+  --transport-br-w: min(calc(232px * 1.3 * 1.3), calc(100% - 28px));
+  --transport-dock-gap: 16px;
+}
+
+.transport-map-wrap {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.transport-map-wrap iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: block;
+}
+
+.transport-map-loading {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 2;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(180, 200, 220, 0.75);
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(15, 20, 30, 0.75);
+  border: 1px solid rgba(94, 234, 212, 0.2);
+  backdrop-filter: blur(10px);
+}
+
+.transport-map-err {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  max-width: 360px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: rgba(26, 31, 43, 0.95);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  color: #fecaca;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* Shared floating chrome */
+.transport-float {
+  position: absolute;
+  z-index: 10;
+  background: rgba(22, 28, 38, 0.82);
+  border: 1px solid rgba(94, 234, 212, 0.18);
+  border-radius: 10px;
+  backdrop-filter: blur(14px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+/* Left column: viz/mode (top) + graph/route (below), same width as former TL panel */
+.transport-left-stack {
+  position: absolute;
+  z-index: 10;
+  top: 16px;
+  left: var(--transport-tl-left);
+  width: var(--transport-tl-w);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: calc(100% - 32px);
+}
+
+.transport-float--stack-panel {
+  position: relative;
+  padding: 12px 14px;
+  box-sizing: border-box;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.transport-float--stack-panel--scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Right rail slot (full height) — used by AtlasRailPanel */
+.transport-float--br {
+  top: 14px;
+  bottom: 14px;
+  right: var(--transport-br-right);
+  width: var(--transport-br-w);
+  overflow-y: auto;
+  padding: 14px 16px;
+  border-radius: 14px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Bottom dock: wide content panel + narrow mode rail on the right */
+.transport-dock-cluster {
+  position: absolute;
+  bottom: 20px;
+  left: var(--transport-dock-gap);
+  right: calc(
+    var(--transport-br-right) + var(--transport-br-w) + var(--transport-dock-gap)
+  );
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 10px;
+  z-index: 10;
+  box-sizing: border-box;
+}
+
+.transport-dock-main {
+  flex: 1;
+  min-width: 0;
+  border-radius: 14px;
+  background: rgba(22, 28, 38, 0.82);
+  border: 1px solid rgba(94, 234, 212, 0.18);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  padding: 16px 16px 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 0;
+}
+
+.transport-dock-mode-rail {
+  flex-shrink: 0;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 10px;
+  border-radius: 14px;
+  background: rgba(22, 28, 38, 0.82);
+  border: 1px solid rgba(94, 234, 212, 0.18);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  box-sizing: border-box;
+  width: max-content;
+  min-width: min(7.25rem, 100%);
+}
+
+.transport-dock-tab--rail {
+  display: block;
+  width: 100%;
+  text-align: center;
+  padding: 10px 12px;
+  line-height: 1.2;
+}
+
+.transport-dock-tab {
+  flex: 0 0 auto;
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid rgba(94, 234, 212, 0.22);
+  background: rgba(10, 14, 22, 0.55);
+  color: rgba(160, 185, 210, 0.9);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+
+.transport-dock-tab:hover {
+  border-color: rgba(94, 234, 212, 0.4);
+  color: #e2eef8;
+}
+
+.transport-dock-tab--active {
+  background: rgba(34, 211, 238, 0.14);
+  border-color: rgba(34, 211, 238, 0.5);
+  color: #a5f3fc;
+}
+
+.transport-dock-row {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  width: 100%;
+  min-width: 0;
+}
+
+.transport-dock-row--search {
+  flex-wrap: wrap;
+}
+
+.transport-dock-search-err {
+  flex: 1 0 100%;
+  margin: 0;
+  font-size: 13px;
+  color: #f87171;
+  line-height: 1.3;
+}
+
+.transport-dock-search-ok {
+  flex: 1 0 100%;
+  margin: 0;
+  font-size: 12px;
+  color: rgba(110, 231, 183, 0.95);
+  font-family: ui-monospace, monospace;
+  line-height: 1.3;
+}
+
+.transport-section-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(148, 180, 200, 0.85);
+  margin-bottom: 8px;
+}
+
+.transport-section-label:not(:first-child) {
+  margin-top: 12px;
+}
+
+/* Viz toggles */
+.transport-pill-row {
+  display: flex;
+  gap: 6px;
+}
+
+.transport-btn-viz {
+  flex: 1;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 7px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(94, 234, 212, 0.22);
+  background: rgba(10, 14, 22, 0.6);
+  color: rgba(200, 220, 235, 0.85);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+
+.transport-btn-viz:hover {
+  border-color: rgba(94, 234, 212, 0.45);
+  color: #e8f4ff;
+}
+
+.transport-btn-viz.active {
+  background: rgba(34, 211, 238, 0.14);
+  border-color: rgba(34, 211, 238, 0.55);
+  color: #a5f3fc;
+  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.12);
+}
+
+/* Mode grid 3×2 */
+.transport-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.transport-btn-mode {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 8px 4px;
+  border-radius: 5px;
+  border: 1px solid rgba(94, 234, 212, 0.15);
+  background: rgba(10, 14, 22, 0.55);
+  color: rgba(170, 195, 215, 0.9);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+
+.transport-btn-mode:hover {
+  border-color: rgba(94, 234, 212, 0.35);
+  color: #e2eef8;
+}
+
+.transport-btn-mode.active {
+  background: rgba(34, 211, 238, 0.12);
+  border-color: rgba(34, 211, 238, 0.5);
+  color: #7dd3fc;
+}
+
+.transport-btn-refresh {
+  margin-top: 10px;
+  width: 100%;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(94, 234, 212, 0.2);
+  background: transparent;
+  color: rgba(180, 205, 225, 0.9);
+  cursor: pointer;
+}
+
+.transport-btn-refresh:hover {
+  border-color: rgba(94, 234, 212, 0.4);
+  background: rgba(34, 211, 238, 0.06);
+}
+
+/* Network stats — same chrome as rest of left stack; keep big node/edge figures */
+.transport-network-stats {
+  margin-top: 12px;
+}
+
+.transport-network-stats__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding-top: 2px;
+}
+
+.transport-network-stats__col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.transport-network-stats__label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(148, 180, 200, 0.85);
+}
+
+.transport-network-stats__value {
+  font-size: clamp(1.5rem, 5vw, 2rem);
+  font-weight: 800;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  color: rgba(248, 250, 252, 0.96);
+}
+
+.transport-network-stats__empty {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.85);
+}
+
+.transport-graph-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 10px;
+  width: 100%;
+}
+
+.transport-toggle-btn {
+  width: 100%;
+  box-sizing: border-box;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(94, 234, 212, 0.22);
+  background: rgba(10, 14, 22, 0.55);
+  color: rgba(200, 220, 235, 0.85);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.35;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+
+.transport-toggle-btn:hover {
+  border-color: rgba(94, 234, 212, 0.4);
+  color: #e2eef8;
+}
+
+.transport-toggle-btn--on {
+  background: rgba(34, 211, 238, 0.12);
+  border-color: rgba(34, 211, 238, 0.5);
+  color: #a5f3fc;
+  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.12);
+}
+
+.transport-route-meta {
+  font-size: 11px;
+  line-height: 1.45;
+  color: rgba(200, 220, 235, 0.88);
+  margin-top: 8px;
+}
+
+.transport-route-err {
+  font-size: 11px;
+  color: #fca5a5;
+  margin-top: 6px;
+  line-height: 1.4;
+}
+
+.transport-ids {
+  font-size: 10px;
+  color: rgba(160, 185, 205, 0.8);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  margin-top: 6px;
+  word-break: break-all;
+}
+
+/* Bottom dock inputs */
+.transport-dock-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 16px;
+  padding: 16px 24px;
+  border-radius: 12px;
+  border: 1px solid rgba(94, 234, 212, 0.2);
+  background: rgba(8, 12, 20, 0.75);
+  color: #e8f0f8;
+}
+
+.transport-dock-input::placeholder {
+  color: rgba(140, 165, 190, 0.55);
+}
+
+.transport-dock-input:focus {
+  outline: none;
+  border-color: rgba(34, 211, 238, 0.45);
+  box-shadow: 0 0 0 4px rgba(34, 211, 238, 0.12);
+}
+
+.transport-btn-compute {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 18px 32px;
+  border-radius: 12px;
+  border: none;
+  background: linear-gradient(180deg, rgba(34, 211, 238, 0.35), rgba(6, 182, 212, 0.45));
+  color: #042018;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.transport-btn-compute:hover {
+  filter: brightness(1.08);
+}
+
+.transport-btn-clear {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 18px 24px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: transparent;
+  color: rgba(220, 235, 250, 0.9);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.transport-btn-clear:hover {
+  border-color: rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* Suggestions above dock */
+.transport-suggest-layer {
+  position: absolute;
+  bottom: 168px;
+  left: var(--transport-dock-gap);
+  right: calc(
+    var(--transport-br-right) + var(--transport-br-w) + var(--transport-dock-gap)
+  );
+  width: auto;
+  transform: none;
+  z-index: 15;
+  max-height: min(336px, 40vh);
+  overflow-y: auto;
+  border-radius: 12px;
+  border: 1px solid rgba(94, 234, 212, 0.22);
+  background: rgba(18, 24, 34, 0.94);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  box-sizing: border-box;
+}
+
+.transport-suggest-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 16px 24px;
+  font-size: 14px;
+  border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: transparent;
+  color: rgba(210, 225, 240, 0.95);
+  cursor: pointer;
+}
+
+.transport-suggest-item:hover {
+  background: rgba(34, 211, 238, 0.08);
+}
+
+.transport-suggest-item:last-child {
+  border-bottom: none;
+}
+
+.transport-hint {
+  font-size: 10px;
+  color: rgba(150, 175, 200, 0.65);
+  margin-top: 8px;
+  line-height: 1.35;
+}

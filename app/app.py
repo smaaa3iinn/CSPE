@@ -18,6 +18,7 @@ from src.core.poi_index import load_poi_lookup
 from src.core.queries import component_info, search_stops_autocomplete, shortest_path
 from src.core.tools import top_hubs
 from src.viz.plot_mapbox import (
+    DEFAULT_MAPBOX_BASEMAP_STYLE,
     load_line_geometries,
     load_render_graph,
     normalize_mapbox_style_url,
@@ -61,7 +62,7 @@ MAPBOX_ACCESS_TOKEN_INLINE: str | None = None
 
 # Optional: MAPBOX_STYLE_URL=https://api.mapbox.com/styles/v1/USER/ID or mapbox://styles/USER/ID (overrides default).
 DEFAULT_MAPBOX_STYLE = normalize_mapbox_style_url(
-    os.getenv("MAPBOX_STYLE_URL", "").strip() or "mapbox://styles/smaaa3iin/cmnkb703u002001sh48945ojt"
+    os.getenv("MAPBOX_STYLE_URL", "").strip() or DEFAULT_MAPBOX_BASEMAP_STYLE
 )
 
 # Self-contained canvas orb (Streamlit markdown strips script; use components.html).

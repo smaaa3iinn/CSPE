@@ -4,44 +4,23 @@ import type { AppMode } from "../store";
 const BTN: Record<AppMode, { label: string; icon: ReactNode }> = {
   transport: {
     label: "Transport",
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
-        <path d="M4 10h16v6H4zM6 16v3M18 16v3M7 6h10l2 4H5l2-4z" />
-        <circle cx="8" cy="13" r="1.2" fill="currentColor" stroke="none" />
-        <circle cx="16" cy="13" r="1.2" fill="currentColor" stroke="none" />
-      </svg>
-    ),
-  },
-  knowledge: {
-    label: "Knowledge",
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
-        <circle cx="11" cy="11" r="7" />
-        <path d="M21 21l-4-4" />
-      </svg>
-    ),
+    icon: <i className="fa-solid fa-location-arrow" style={{ fontSize: 18 }} aria-hidden />,
   },
   visual: {
-    label: "Visual board",
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
-        <rect x="3" y="4" width="8" height="7" rx="1" />
-        <rect x="13" y="4" width="8" height="12" rx="1" />
-        <rect x="3" y="13" width="8" height="7" rx="1" />
-      </svg>
-    ),
+    label: "Search and visuals",
+    icon: <i className="fa-solid fa-globe" style={{ fontSize: 18 }} aria-hidden />,
   },
   memory: {
     label: "Memory",
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
-        <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
-      </svg>
-    ),
+    icon: <i className="fa-solid fa-folder-tree" style={{ fontSize: 18 }} aria-hidden />,
+  },
+  music: {
+    label: "Music",
+    icon: <i className="fa-brands fa-spotify" style={{ fontSize: 18 }} aria-hidden />,
   },
 };
 
-const ORDER: AppMode[] = ["transport", "knowledge", "visual", "memory"];
+const ORDER: AppMode[] = ["transport", "visual", "memory", "music"];
 
 export function ToolRail({ mode, onMode }: { mode: AppMode; onMode: (m: AppMode) => void }) {
   return (

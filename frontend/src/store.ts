@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { StructuredOutput } from "./types/payloads";
 
-export type AppMode = "transport" | "knowledge" | "visual" | "memory";
+export type AppMode = "transport" | "visual" | "memory" | "music";
 
 type ChatTurn = { role: "user" | "assistant"; content: string };
 
@@ -9,7 +9,7 @@ type VisualPanel = { title: string; query: string; urls: string[] };
 
 function ingestStructuredOutputs(outputs: StructuredOutput[]) {
   let assistantText = "";
-  const images: { url: string; caption?: string }[] = [];
+  const byUrl = new Map<string, { url: string; caption?: string }>();
   let panels: VisualPanel[] = [];
 
   for (const b of outputs) {
@@ -17,21 +17,31 @@ function ingestStructuredOutputs(outputs: StructuredOutput[]) {
       assistantText = [assistantText, b.content].filter(Boolean).join("\n\n");
     }
     if (b.type === "image_results") {
-      images.push(...b.images);
+      for (const im of b.images) {
+        if (im.url && !byUrl.has(im.url)) {
+          byUrl.set(im.url, { url: im.url, caption: im.caption });
+        }
+      }
     }
     if (b.type === "visual_board") {
       panels = b.panels;
+      for (const p of b.panels) {
+        for (const u of p.urls) {
+          if (u && !byUrl.has(u)) {
+            byUrl.set(u, { url: u, caption: p.title || undefined });
+          }
+        }
+      }
     }
   }
 
-  return { assistantText, images, panels };
+  return { assistantText, images: [...byUrl.values()], panels };
 }
 
 type TransportMode = "all" | "metro" | "rail" | "tram" | "bus" | "other";
 
 type State = {
   mode: AppMode;
-  atlasOpen: boolean;
   chatHistory: ChatTurn[];
   chatLoading: boolean;
   chatError: string | null;
@@ -50,7 +60,6 @@ type State = {
   transportRouteMeta: string | null;
   memoryProjectId: string | null;
   setMode: (m: AppMode) => void;
-  setAtlasOpen: (v: boolean) => void;
   appendUserMessage: (text: string) => void;
   setChatLoading: (v: boolean) => void;
   setChatError: (e: string | null) => void;
@@ -65,11 +74,11 @@ type State = {
   setTransportRouteError: (e: string | null) => void;
   setTransportRouteMeta: (e: string | null) => void;
   setMemoryProjectId: (id: string | null) => void;
+  syncAtlasVoiceUi: (outputs: StructuredOutput[]) => void;
 };
 
 export const useAppStore = create<State>((set) => ({
   mode: "transport",
-  atlasOpen: false,
   chatHistory: [],
   chatLoading: false,
   chatError: null,
@@ -78,7 +87,7 @@ export const useAppStore = create<State>((set) => ({
   knowledgeImages: [],
   visualPanels: [],
   transportGraphMode: "metro",
-  transportUseLcc: true,
+  transportUseLcc: false,
   transportViz: "geographic",
   transportPathIds: null,
   transportShowTransfers: false,
@@ -89,7 +98,6 @@ export const useAppStore = create<State>((set) => ({
   memoryProjectId: null,
 
   setMode: (m) => set({ mode: m }),
-  setAtlasOpen: (v) => set({ atlasOpen: v }),
   appendUserMessage: (text) =>
     set((s) => ({
       chatHistory: [...s.chatHistory, { role: "user", content: text }],
@@ -124,4 +132,14 @@ export const useAppStore = create<State>((set) => ({
   setTransportRouteError: (e) => set({ transportRouteError: e }),
   setTransportRouteMeta: (e) => set({ transportRouteMeta: e }),
   setMemoryProjectId: (id) => set({ memoryProjectId: id }),
+  syncAtlasVoiceUi: (outputs) =>
+    set((s) => {
+      const { assistantText, images, panels } = ingestStructuredOutputs(outputs);
+      return {
+        lastStructuredOutputs: outputs,
+        knowledgeSummary: assistantText || s.knowledgeSummary,
+        knowledgeImages: images.length ? images : s.knowledgeImages,
+        visualPanels: panels.length ? panels : s.visualPanels,
+      };
+    }),
 }));

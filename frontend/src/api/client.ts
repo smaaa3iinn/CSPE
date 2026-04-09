@@ -1,5 +1,26 @@
 import type { StructuredOutput } from "../types/payloads";
 
+export async function postAtlasInputMode(mode: "text" | "voice"): Promise<void> {
+  const r = await fetch("/api/atlas/input-mode", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode }),
+  });
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(t || `atlas input-mode ${r.status}`);
+  }
+}
+
+export async function fetchAtlasUi(): Promise<{
+  ui: Record<string, unknown>;
+  structured_outputs: StructuredOutput[];
+}> {
+  const r = await fetch("/api/atlas/ui");
+  if (!r.ok) throw new Error(`atlas ui ${r.status}`);
+  return r.json() as Promise<{ ui: Record<string, unknown>; structured_outputs: StructuredOutput[] }>;
+}
+
 export async function postChat(message: string): Promise<{
   structured_outputs: StructuredOutput[];
   error: string | null;
@@ -71,17 +92,81 @@ export async function postRoute(from_stop_id: string, to_stop_id: string, mode: 
   }>;
 }
 
+export type MemoryProjectDto = {
+  id: string;
+  name: string;
+  count?: number;
+  done_count?: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type TaskStatus = "todo" | "in_progress" | "done";
+
+export type MemoryTaskDto = {
+  id: string;
+  title: string;
+  done: boolean;
+  status: TaskStatus;
+  tags?: string[];
+  due_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
 export async function getMemoryProjects() {
   const r = await fetch("/api/memory/projects");
   if (!r.ok) throw new Error(`projects ${r.status}`);
-  return r.json() as Promise<{ projects: { id: string; name: string }[] }>;
+  return r.json() as Promise<{ projects: MemoryProjectDto[] }>;
+}
+
+export async function postMemoryProject(name: string) {
+  const r = await fetch("/api/memory/projects", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!r.ok) throw new Error(`create project ${r.status}`);
+  return r.json() as Promise<MemoryProjectDto>;
+}
+
+export async function deleteMemoryProject(projectId: string) {
+  const r = await fetch(`/api/memory/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" });
+  if (!r.ok) throw new Error(`delete project ${r.status}`);
+  return r.json() as Promise<{ ok: boolean }>;
 }
 
 export async function getMemoryTasks(projectId: string) {
   const r = await fetch(`/api/memory/tasks?project_id=${encodeURIComponent(projectId)}`);
   if (!r.ok) throw new Error(`tasks ${r.status}`);
-  return r.json() as Promise<{
-    project_id: string;
-    tasks: { id: string; title: string; done: boolean }[];
-  }>;
+  return r.json() as Promise<{ project_id: string; tasks: MemoryTaskDto[] }>;
+}
+
+export async function postMemoryTask(projectId: string, title: string, status: TaskStatus = "todo") {
+  const r = await fetch("/api/memory/tasks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ project_id: projectId, title, status }),
+  });
+  if (!r.ok) throw new Error(`create task ${r.status}`);
+  return r.json() as Promise<MemoryTaskDto>;
+}
+
+export async function patchMemoryTask(
+  taskId: string,
+  patch: { title?: string; status?: TaskStatus }
+) {
+  const r = await fetch(`/api/memory/tasks/${encodeURIComponent(taskId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!r.ok) throw new Error(`patch task ${r.status}`);
+  return r.json() as Promise<MemoryTaskDto>;
+}
+
+export async function deleteMemoryTask(taskId: string) {
+  const r = await fetch(`/api/memory/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" });
+  if (!r.ok) throw new Error(`delete task ${r.status}`);
+  return r.json() as Promise<{ ok: boolean }>;
 }
