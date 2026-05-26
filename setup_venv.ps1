@@ -24,4 +24,4 @@ Write-Host "Upgrading pip and installing requirements..."
 & $py -m pip install --upgrade pip
 & $py -m pip install -r (Join-Path $PSScriptRoot "requirements.txt")
 
-Write-Host "Done. Run .\run_app.ps1"
+Write-Host "Done. Start the stack with .\run_web_app.ps1 (Atlas + FastAPI + Vite), or run .\run_product_shell.ps1 and npm run dev in frontend\."

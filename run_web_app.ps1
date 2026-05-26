@@ -1,13 +1,13 @@
 # Full product stack: Atlas headless (5055) + product API (8787) + Vite (5173).
-# Optional: CSPE Flask API for Atlas transport tools — set $StartCspeApi or use start_cspe_api.ps1 separately.
+# Transport + shell + Spotify + memory APIs for the React app and Atlas tools are on the same FastAPI process (8787): /api/transport/*, /api/shell/*, etc.
+# Atlas tools: CSPE_FRONTEND_URL defaults to http://127.0.0.1:5173 (React/Vite origin for cspe_open_transport_map).
 #
 # Atlas interpreter: set ATLAS_PYTHON to the python.exe that has Atlas installed (e.g. global 3.12 or Atlas .venv).
 # Mapbox: MAPBOX_TOKEN in env or repo-root .env
 
 [CmdletBinding()]
 param(
-    [switch]$SkipAtlas,
-    [switch]$StartCspeApi
+    [switch]$SkipAtlas
 )
 
 $ErrorActionPreference = "Stop"
@@ -112,19 +112,10 @@ if (-not (Test-Path -LiteralPath $cspePy)) {
 
 $atlasApiProc = $null
 $atlasWakeProc = $null
-$cspeApiProc = $null
 $bff = $null
 $savedPythonPath = $env:PYTHONPATH
 
 try {
-    if ($StartCspeApi) {
-        $env:PYTHONPATH = $Root
-        Write-Host '[1a] Starting CSPE API on port 5057 (minimized window)...'
-        $cspeApiProc = Start-Process -FilePath $cspePy -ArgumentList @("-m", "cspe_api") `
-            -WorkingDirectory $Root -WindowStyle Minimized -PassThru
-        Wait-HttpOk -Url "http://127.0.0.1:5057/health" -Label "CSPE API" -MaxSeconds 90
-    }
-
     if (-not $SkipAtlas) {
         if (-not ((Test-Path -LiteralPath $runApi) -and (Test-Path -LiteralPath $wakeMain))) {
             Write-Warning 'Atlas sources not found: expected run_api.py and wake_service. Chat will fail until Atlas runs on 5055.'
@@ -174,9 +165,10 @@ try {
     # Product BFF imports backend.* from CSPE root
     $env:PYTHONPATH = $Root
 
-    # Defaults for Atlas CSPE tools (optional)
-    if (-not $env:CSPE_API_BASE) { $env:CSPE_API_BASE = "http://127.0.0.1:5057" }
-    if (-not $env:CSPE_STREAMLIT_URL) { $env:CSPE_STREAMLIT_URL = "http://127.0.0.1:5173" }
+    # Defaults for Atlas tools: PRODUCT_SHELL_URL = FastAPI (graph /v1 + /api); CSPE_FRONTEND_URL = Vite origin.
+    if (-not $env:PRODUCT_SHELL_URL) { $env:PRODUCT_SHELL_URL = "http://127.0.0.1:8787" }
+    # Atlas tools (e.g. cspe_open_transport_map): origin of the React/Vite app (not the API port).
+    if (-not $env:CSPE_FRONTEND_URL) { $env:CSPE_FRONTEND_URL = "http://127.0.0.1:5173" }
 
     Write-Host '[2] Starting product API on port 8787 (minimized window)...'
     $bff = Start-Process -FilePath $cspePy -ArgumentList @(
@@ -189,9 +181,15 @@ try {
     Write-Host '[3] Starting Vite on 0.0.0.0:5173 - laptop: http://127.0.0.1:5173'
     Write-Host '    Same WiFi iPad or phone: http://YOUR_LAN_IP:5173 - run ipconfig to find IPv4'
     Write-Host '    Optional .env: VITE_API_BASE=http://YOUR_LAN_IP:8787 if you bypass the Vite proxy; SPOTIFY_REDIRECT_URI must match the page origin for OAuth.'
+    Write-Host '    GraphXR viewer: run `cd viewers\graphxr; npm run dev -- -p 3000` in a second terminal for 3D/VR graph mode.'
     Write-Host '    Spotify dashboard: add redirect URI for each origin, e.g. http://192.168.x.x:5173/callback'
     Write-Host '    Press Ctrl+C here to stop the dev server; background Python processes will be stopped.'
-    Set-Location (Join-Path $Root "frontend")
+    $frontendDir = Join-Path $Root "frontend"
+    Set-Location $frontendDir
+    if (-not (Test-Path -LiteralPath (Join-Path $frontendDir "node_modules\vite"))) {
+        Write-Host '    Frontend dependencies missing; running npm install in frontend...'
+        npm install
+    }
     npm run dev
 }
 finally {
@@ -199,9 +197,6 @@ finally {
     Set-Location $Root
     if ($bff -and -not $bff.HasExited) {
         Stop-Process -Id $bff.Id -Force -ErrorAction SilentlyContinue
-    }
-    if ($cspeApiProc -and -not $cspeApiProc.HasExited) {
-        Stop-Process -Id $cspeApiProc.Id -Force -ErrorAction SilentlyContinue
     }
     if ($atlasWakeProc -and -not $atlasWakeProc.HasExited) {
         Stop-Process -Id $atlasWakeProc.Id -Force -ErrorAction SilentlyContinue

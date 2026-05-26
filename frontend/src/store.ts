@@ -1,5 +1,8 @@
 import { create } from "zustand";
+import type { AtlasTransportActionPayload } from "./transport/atlasTransportTypes";
 import type { StructuredOutput } from "./types/payloads";
+
+export type { AtlasTransportActionPayload, AtlasTransportActionSpec } from "./transport/atlasTransportTypes";
 
 export type AppMode = "transport" | "visual" | "memory" | "music";
 
@@ -62,6 +65,7 @@ type State = {
   transportStats: { nodes: number; edges: number } | null;
   transportRouteError: string | null;
   transportRouteMeta: string | null;
+  atlasTransportAction: AtlasTransportActionPayload | null;
   memoryProjectId: string | null;
   setMode: (m: AppMode) => void;
   appendUserMessage: (text: string) => void;
@@ -79,6 +83,7 @@ type State = {
   setTransportStats: (s: { nodes: number; edges: number } | null) => void;
   setTransportRouteError: (e: string | null) => void;
   setTransportRouteMeta: (e: string | null) => void;
+  setAtlasTransportAction: (p: AtlasTransportActionPayload | null) => void;
   setMemoryProjectId: (id: string | null) => void;
   syncAtlasVoiceUi: (outputs: StructuredOutput[]) => void;
 };
@@ -103,6 +108,7 @@ export const useAppStore = create<State>((set) => ({
   transportStats: null,
   transportRouteError: null,
   transportRouteMeta: null,
+  atlasTransportAction: null,
   memoryProjectId: null,
 
   setMode: (m) => set({ mode: m }),
@@ -141,6 +147,7 @@ export const useAppStore = create<State>((set) => ({
   setTransportStats: (st) => set({ transportStats: st }),
   setTransportRouteError: (e) => set({ transportRouteError: e }),
   setTransportRouteMeta: (e) => set({ transportRouteMeta: e }),
+  setAtlasTransportAction: (p) => set({ atlasTransportAction: p }),
   setMemoryProjectId: (id) => set({ memoryProjectId: id }),
   syncAtlasVoiceUi: (outputs) =>
     set((s) => {

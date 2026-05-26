@@ -3,8 +3,18 @@ import { useNavigate } from "react-router-dom";
 import type { StructuredOutput } from "../types/payloads";
 import { apiUrl } from "../api/config";
 import { useAppStore } from "../store";
+import type { AtlasTransportActionSpec } from "../transport/atlasTransportTypes";
+import { normalizeAtlasTransportSpec } from "../transport/atlasTransportTypes";
 
 const POLL_MS = 600;
+
+function enqueueAtlasTransportAction(spec: AtlasTransportActionSpec) {
+  const s = useAppStore.getState();
+  const nextSeq = (s.atlasTransportAction?.seq ?? 0) + 1;
+  // eslint-disable-next-line no-console
+  console.info("[atlas_transport] action enqueued", { seq: nextSeq, spec });
+  s.setAtlasTransportAction({ seq: nextSeq, spec });
+}
 
 function applyOne(raw: Record<string, unknown>, navigate: ReturnType<typeof useNavigate>) {
   const kind = raw.kind;
@@ -61,6 +71,25 @@ function applyOne(raw: Record<string, unknown>, navigate: ReturnType<typeof useN
       if ("route_meta" in raw) {
         s.setTransportRouteMeta(raw.route_meta === null ? null : String(raw.route_meta));
       }
+      break;
+    }
+    case "atlas_transport_action": {
+      const specRaw = raw.spec;
+      if (!specRaw || typeof specRaw !== "object" || Array.isArray(specRaw)) break;
+      const spec = normalizeAtlasTransportSpec(specRaw as Record<string, unknown>);
+      enqueueAtlasTransportAction(spec);
+      break;
+    }
+    /** @deprecated Use atlas_transport_action; legacy keeps route-only without overwriting graph/LCC. */
+    case "atlas_transport_intent": {
+      const from_q = String(raw.from_query ?? "").trim();
+      const to_q = String(raw.to_query ?? "").trim();
+      if (from_q.length < 1 || to_q.length < 1) break;
+      enqueueAtlasTransportAction({
+        from_query: from_q,
+        to_query: to_q,
+        run: "route",
+      });
       break;
     }
     case "memory_project": {

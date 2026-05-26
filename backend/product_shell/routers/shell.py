@@ -9,6 +9,8 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
+from backend.product_shell import ui_transport_logger as ui_log
+
 router = APIRouter(tags=["shell"])
 
 _MAX = 256
@@ -27,9 +29,27 @@ def shell_enqueue(body: ShellEnqueueBody) -> dict[str, Any]:
     with _lock:
         for c in body.commands:
             if isinstance(c, dict) and c.get("kind"):
-                _queue.append(dict(c))
+                cc = dict(c)
+                _queue.append(cc)
                 n += 1
+                k = cc.get("kind")
+                if k == "atlas_transport_intent":
+                    ui_log.log_atlas_transport_intent_enqueued(cc)
+                elif k == "atlas_transport_action":
+                    ui_log.log_atlas_transport_action_enqueued(cc)
     return {"ok": True, "queued": n}
+
+
+class ShellClientLogBody(BaseModel):
+    event: str = Field(..., min_length=1)
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+@router.post("/shell/client-log")
+def shell_client_log(body: ShellClientLogBody) -> dict[str, Any]:
+    """Browser posts structured Atlas transport pipeline milestones to product_ui_transport.log."""
+    ui_log.log_atlas_transport_client_event(body.event, body.data)
+    return {"ok": True}
 
 
 @router.get("/shell/poll")

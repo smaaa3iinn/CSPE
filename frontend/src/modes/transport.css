@@ -264,6 +264,11 @@
   color: #f1f5f9;
 }
 
+.transport-btn-viz:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .transport-btn-viz.active {
   background: rgba(148, 163, 184, 0.14);
   border-color: rgba(148, 163, 184, 0.55);
@@ -320,6 +325,31 @@
 .transport-btn-refresh:hover {
   border-color: rgba(148, 163, 184, 0.4);
   background: rgba(148, 163, 184, 0.06);
+}
+
+.transport-btn-graph3d {
+  margin-top: 8px;
+  width: 100%;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 9px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(249, 115, 22, 0.45);
+  background: rgba(249, 115, 22, 0.14);
+  color: rgba(255, 237, 213, 0.96);
+  cursor: pointer;
+}
+
+.transport-btn-graph3d:hover:not(:disabled) {
+  border-color: rgba(251, 146, 60, 0.75);
+  background: rgba(249, 115, 22, 0.22);
+}
+
+.transport-btn-graph3d:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 /* Network stats — same chrome as rest of left stack; keep big node/edge figures */

@@ -15,6 +15,7 @@ except ModuleNotFoundError:  # pragma: no cover - optional legacy dependency
 
 from src.core.debug_log import get_debug_logger, log_event
 from src.core.poi_index import LocalPOILookup
+from src.core.station_layer import StationLayerIndex
 from src.viz.paris_mask import build_paris_mask_payload
 
 LOGGER = get_debug_logger("cspe.plot_mapbox")
@@ -863,8 +864,9 @@ def _station_click_html_with_pois(
     )
 
 
-def _nearby_pois_for_station(
-    attrs: dict[str, Any],
+def _nearby_pois_at_lon_lat(
+    lon: float,
+    lat: float,
     *,
     poi_lookup: LocalPOILookup | None,
     poi_radius_m: float,
@@ -874,14 +876,9 @@ def _nearby_pois_for_station(
 ) -> list[dict[str, Any]]:
     if poi_lookup is None:
         return []
-
-    point = _node_lon_lat(attrs)
-    if point is None:
-        return []
-
     rows = poi_lookup.query(
-        point[1],
-        point[0],
+        lat,
+        lon,
         radius_m=poi_radius_m,
         category_key=poi_category_key,
         category_value=poi_category_value,
@@ -899,6 +896,224 @@ def _nearby_pois_for_station(
         }
         for row in rows
     ]
+
+
+def _nearby_pois_for_station(
+    attrs: dict[str, Any],
+    *,
+    poi_lookup: LocalPOILookup | None,
+    poi_radius_m: float,
+    poi_limit: int,
+    poi_category_key: str | None = None,
+    poi_category_value: str | None = None,
+) -> list[dict[str, Any]]:
+    point = _node_lon_lat(attrs)
+    if point is None:
+        return []
+    lon, lat = point
+    return _nearby_pois_at_lon_lat(
+        lon,
+        lat,
+        poi_lookup=poi_lookup,
+        poi_radius_m=poi_radius_m,
+        poi_limit=poi_limit,
+        poi_category_key=poi_category_key,
+        poi_category_value=poi_category_value,
+    )
+
+
+def _merge_lines_for_station_group(G: nx.Graph, member_stop_ids: list[str]) -> dict[str, list[str]]:
+    """Union of line lists across platform stops at one interchange."""
+    out: dict[str, list[str]] = {}
+    seen: dict[str, set[str]] = {}
+    for sid in member_stop_ids:
+        if sid not in G.nodes:
+            continue
+        gl = _station_lines_by_mode(dict(G.nodes[sid]))
+        for mode, lines in gl.items():
+            seen.setdefault(mode, set())
+            out.setdefault(mode, [])
+            for line in lines:
+                if line not in seen[mode]:
+                    seen[mode].add(line)
+                    out[mode].append(line)
+    return out
+
+
+def _station_group_degree_sum(G: nx.Graph, member_stop_ids: list[str]) -> int:
+    s = 0
+    for sid in member_stop_ids:
+        if sid not in G.nodes:
+            continue
+        attrs = dict(G.nodes[sid])
+        s += _station_degree(G, sid, attrs)
+    return s
+
+
+def _station_group_hover_html(station_name: str, merged: dict[str, list[str]]) -> str:
+    parts = [f"<b>{escape(station_name)}</b>"]
+    for transport_mode in ("metro", "rail", "tram", "bus"):
+        values = merged.get(transport_mode, [])
+        if not values:
+            continue
+        shown = [escape(v) for v in values[:8]]
+        suffix = "…" if len(values) > 8 else ""
+        parts.append(f"{escape(_display_mode_name(transport_mode))}: {', '.join(shown)}{suffix}")
+    return "<br>".join(parts)
+
+
+def _station_group_click_html_with_pois(
+    G: nx.Graph,
+    idx: StationLayerIndex,
+    station_id: str,
+    *,
+    poi_lookup: LocalPOILookup | None,
+    poi_radius_m: float,
+    poi_limit: int,
+    poi_category_key: str | None,
+    poi_category_value: str | None,
+) -> str:
+    members = [s for s in idx.station_to_stops.get(station_id, []) if s in G.nodes]
+    station_name = str(idx.station_label.get(station_id, station_id))
+    merged = _merge_lines_for_station_group(G, members)
+    all_lines = [line for mode in ("metro", "rail", "tram", "bus") for line in merged.get(mode, [])]
+    n_modes = len(merged)
+    deg = _station_group_degree_sum(G, members)
+    mode_pills = "".join(_mode_pill_html(mode) for mode in merged)
+    mode_section = mode_pills or '<div class="station-empty">No mode data available.</div>'
+    metrics = "".join(
+        [
+            _metric_card_html("Connections", str(deg)),
+            _metric_card_html("Modes", str(n_modes)),
+            _metric_card_html("Lines", str(len(all_lines))),
+        ]
+    )
+    platform_chunks: list[str] = []
+    for sid in members[:14]:
+        nm = str(G.nodes[sid].get("stop_name") or sid)
+        platform_chunks.append(
+            f'<div class="station-platform-row">{escape(nm)} '
+            f'<span class="station-platform-id">{escape(sid)}</span></div>'
+        )
+    if len(members) > 14:
+        platform_chunks.append(
+            f'<div class="station-empty">+{len(members) - 14} more platform(s)</div>'
+        )
+    platforms_block = ""
+    if members:
+        platforms_block = (
+            '<div class="station-section">'
+            '<div class="station-section__title">Platforms</div>'
+            f'<div class="station-platform-list">{"".join(platform_chunks)}</div>'
+            "</div>"
+        )
+
+    base_core = (
+        '<div class="station-card">'
+        '<div class="station-card__hero">'
+        '<div class="station-card__eyebrow">Transit interchange</div>'
+        f'<div class="station-card__title">{escape(station_name)}</div>'
+        f'<div class="station-card__subtitle">Station ID {escape(station_id)} · {len(members)} platform(s)</div>'
+        "</div>"
+        f'<div class="station-metrics">{metrics}</div>'
+        '<div class="station-section">'
+        '<div class="station-section__title">Modes</div>'
+        f'<div class="station-pill-row">{mode_section}</div>'
+        "</div>"
+        '<div class="station-section">'
+        '<div class="station-section__title">Lines</div>'
+        f"{_line_groups_html(merged)}"
+        "</div>"
+        f"{platforms_block}"
+    )
+
+    lon_lat = idx.station_centroid.get(station_id)
+    if lon_lat is None:
+        return base_core + "</div>"
+
+    lon, lat = lon_lat
+    poi_rows = _nearby_pois_at_lon_lat(
+        lon,
+        lat,
+        poi_lookup=poi_lookup,
+        poi_radius_m=poi_radius_m,
+        poi_limit=poi_limit,
+        poi_category_key=poi_category_key,
+        poi_category_value=poi_category_value,
+    )
+    if poi_rows:
+        poi_cards = "".join(_poi_card_html(row) for row in poi_rows)
+    else:
+        poi_cards = '<div class="station-empty">No nearby POIs found for this radius.</div>'
+    poi_section = (
+        '<div class="station-section">'
+        f'<div class="station-section__title">Nearby POIs <span class="station-section__hint">{int(poi_radius_m)} m</span></div>'
+        f'<div class="poi-card-list">{poi_cards}</div>'
+        "</div>"
+    )
+    return base_core + poi_section + "</div>"
+
+
+def _enrich_station_network_points_fc(
+    G: nx.Graph,
+    idx: StationLayerIndex,
+    fc: dict[str, Any],
+    *,
+    poi_lookup: LocalPOILookup | None,
+    poi_radius_m: float,
+    poi_limit: int,
+    poi_category_key: str | None,
+    poi_category_value: str | None,
+) -> dict[str, Any]:
+    """Add hover/click HTML and POI JSON to station overlay points (same UX as stop markers)."""
+    out_features: list[dict[str, Any]] = []
+    for feat in fc.get("features") or []:
+        if not isinstance(feat, dict):
+            continue
+        props = dict(feat.get("properties") or {})
+        sid = str(props.get("station_id") or "").strip()
+        if not sid or sid not in idx.station_centroid:
+            out_features.append(feat)
+            continue
+        station_name = str(idx.station_label.get(sid, sid))
+        members = [s for s in idx.station_to_stops.get(sid, []) if s in G.nodes]
+        merged = _merge_lines_for_station_group(G, members)
+        props["station_name"] = station_name
+        props["stop_name"] = station_name
+        props["name"] = station_name
+        props["hover_html"] = _station_group_hover_html(station_name, merged)
+        props["click_html"] = _station_group_click_html_with_pois(
+            G,
+            idx,
+            sid,
+            poi_lookup=poi_lookup,
+            poi_radius_m=poi_radius_m,
+            poi_limit=poi_limit,
+            poi_category_key=poi_category_key,
+            poi_category_value=poi_category_value,
+        )
+        lon_lat = idx.station_centroid.get(sid)
+        if lon_lat is None:
+            props["nearby_pois_json"] = "[]"
+        else:
+            lon, lat = lon_lat
+            nearby = _nearby_pois_at_lon_lat(
+                lon,
+                lat,
+                poi_lookup=poi_lookup,
+                poi_radius_m=poi_radius_m,
+                poi_limit=poi_limit,
+                poi_category_key=poi_category_key,
+                poi_category_value=poi_category_value,
+            )
+            props["nearby_pois_json"] = json.dumps(nearby, ensure_ascii=True, separators=(",", ":"))
+        props["connections"] = str(_station_group_degree_sum(G, members))
+        modes_nonempty = [m for m in ("metro", "rail", "tram", "bus") if merged.get(m)]
+        props["visible_mode"] = modes_nonempty[0] if modes_nonempty else "other"
+        nf = dict(feat)
+        nf["properties"] = props
+        out_features.append(nf)
+    return {"type": "FeatureCollection", "features": out_features}
 
 
 def _distance_sq(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -1697,6 +1912,7 @@ def render_mapbox_gl_html(
     station_network_lines: dict[str, Any] | None = None,
     suppress_stop_markers: bool = False,
     suppress_base_network: bool = False,
+    station_layer_index: StationLayerIndex | None = None,
 ) -> tuple[str, dict[str, Any]]:
     active_render_graph = _active_render_graph_for_mode(mode, render_graphs_by_mode)
     center, zoom = _center_and_zoom(G, render_nodes=None if active_render_graph is None else active_render_graph.get("nodes"))
@@ -1726,6 +1942,17 @@ def render_mapbox_gl_html(
     empty_fc: dict[str, Any] = {"type": "FeatureCollection", "features": []}
     st_pts = station_network_points if isinstance(station_network_points, dict) else empty_fc
     st_lines = station_network_lines if isinstance(station_network_lines, dict) else empty_fc
+    if station_layer_index is not None and isinstance(st_pts, dict) and st_pts.get("features"):
+        st_pts = _enrich_station_network_points_fc(
+            G,
+            station_layer_index,
+            st_pts,
+            poi_lookup=poi_lookup,
+            poi_radius_m=poi_radius_m,
+            poi_limit=poi_limit,
+            poi_category_key=poi_category_key,
+            poi_category_value=poi_category_value,
+        )
 
     transfer_features: list[dict[str, Any]] = []
     if show_transfers and not suppress_base_network:
@@ -2150,6 +2377,26 @@ def render_mapbox_gl_html(
       border: 1px dashed rgba(148, 163, 184, 0.18);
       color: #94a3b8;
     }}
+    .station-platform-list {{
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 220px;
+      overflow-y: auto;
+    }}
+    .station-platform-row {{
+      font-size: 12px;
+      color: #e2e8f0;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: baseline;
+    }}
+    .station-platform-id {{
+      font-size: 11px;
+      color: #64748b;
+      flex: 0 0 auto;
+    }}
     .poi-card-list {{
       display: grid;
       gap: 10px;
@@ -2255,7 +2502,8 @@ def render_mapbox_gl_html(
     }}
 
     function buildLightHoverHtml(properties) {{
-      return `<b>${{escapeHtml(properties.stop_name || properties.stop_id || 'Stop')}}</b>`;
+      const label = properties.station_name || properties.name || properties.stop_name || properties.stop_id || 'Stop';
+      return `<b>${{escapeHtml(label)}}</b>`;
     }}
 
     function buildLightClickHtml(properties) {{
@@ -2503,11 +2751,7 @@ def render_mapbox_gl_html(
           .addTo(map);
       }});
 
-      map.on('click', 'stations', (event) => {{
-        const feature = event.features && event.features[0];
-        if (!feature) {{
-          return;
-        }}
+      function bindStationPopupFromFeature(feature) {{
         const coordinates = [feature.geometry.coordinates[0], feature.geometry.coordinates[1]];
         const clickHtml = feature.properties.click_html || buildLightClickHtml(feature.properties || {{}});
         let nearbyPois = [];
@@ -2530,10 +2774,54 @@ def render_mapbox_gl_html(
         clickPopup.on('close', () => {{
           setClickedPois([]);
         }});
+      }}
+
+      map.on('click', 'stations', (event) => {{
+        const feature = event.features && event.features[0];
+        if (!feature) {{
+          return;
+        }}
+        bindStationPopupFromFeature(feature);
+      }});
+
+      map.on('mouseenter', 'station-net-points', () => {{
+        map.getCanvas().style.cursor = 'pointer';
+      }});
+
+      map.on('mouseleave', 'station-net-points', () => {{
+        map.getCanvas().style.cursor = '';
+        hoverPopup = ensurePopupRemoved(hoverPopup);
+      }});
+
+      map.on('mousemove', 'station-net-points', (event) => {{
+        const feature = event.features && event.features[0];
+        if (!feature) {{
+          return;
+        }}
+        const coordinates = [feature.geometry.coordinates[0], feature.geometry.coordinates[1]];
+        const hoverHtml = feature.properties.hover_html || buildLightHoverHtml(feature.properties || {{}});
+        hoverPopup = ensurePopupRemoved(hoverPopup);
+        hoverPopup = new mapboxgl.Popup({{
+          closeButton: false,
+          closeOnClick: false,
+          offset: 12,
+          className: 'hover-popup'
+        }})
+          .setLngLat(coordinates)
+          .setHTML(hoverHtml)
+          .addTo(map);
+      }});
+
+      map.on('click', 'station-net-points', (event) => {{
+        const feature = event.features && event.features[0];
+        if (!feature) {{
+          return;
+        }}
+        bindStationPopupFromFeature(feature);
       }});
 
       map.on('click', (event) => {{
-        const features = map.queryRenderedFeatures(event.point, {{ layers: ['stations'] }});
+        const features = map.queryRenderedFeatures(event.point, {{ layers: ['stations', 'station-net-points'] }});
         if (!features.length && clickPopup) {{
           clickPopup = ensurePopupRemoved(clickPopup);
           setClickedPois([]);

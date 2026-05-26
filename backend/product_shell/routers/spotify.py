@@ -257,6 +257,25 @@ class PlayBody(BaseModel):
     context_uri: str | None = None
 
 
+class PlayQueryBody(BaseModel):
+    """Natural-language track query: search Spotify and play the top track match (Atlas / voice UX)."""
+
+    query: str = Field(..., min_length=1, max_length=300)
+
+
+def _playback_hint(status_code: int, message: str) -> str | None:
+    if status_code == 404:
+        return (
+            "No active Spotify Connect device. Open Spotify on a phone, desktop, or web player, "
+            "then try again."
+        )
+    if status_code == 403:
+        return "Spotify returned 403 — check API access, scopes, and developer dashboard user allowlist."
+    if "Device not found" in message or "NO_ACTIVE_DEVICE" in message:
+        return "Start playback once from the Spotify app so a device is active, then retry."
+    return None
+
+
 @router.get("/spotify/login-url")
 def spotify_login_url() -> dict[str, str]:
     return {"url": build_authorize_url()}
@@ -653,6 +672,55 @@ def spotify_play(body: PlayBody | None = Body(default=None)) -> dict[str, Any]:
         logger.warning("Spotify play | status=%s | body=%s", r.status_code, r.text[:200])
         raise HTTPException(status_code=r.status_code or 500, detail=r.text[:200] or "play failed")
     return {"ok": True}
+
+
+@router.post("/spotify/play-query")
+def spotify_play_query(body: PlayQueryBody) -> dict[str, Any]:
+    """
+    Search Spotify for tracks and start playback of the best match (first result).
+    Returns application JSON (not only HTTP errors) so Atlas can parse without exception flow.
+    """
+    _require_config()
+    q = (body.query or "").strip()
+    if not q:
+        return {"ok": False, "error": "empty_query", "query": ""}
+    spotify_limit = 10
+    r = _api_call("GET", "/search", params={"q": q, "type": "track", "limit": spotify_limit})
+    if not r.ok:
+        msg = _spotify_error_message(r)
+        logger.warning("Spotify play-query search | status=%s | body=%s", r.status_code, r.text[:200])
+        return {
+            "ok": False,
+            "error": "search_failed",
+            "message": msg,
+            "query": q,
+            "spotify_status": r.status_code,
+        }
+    data = r.json()
+    items = (data.get("tracks") or {}).get("items") or []
+    if not items:
+        return {"ok": False, "error": "no_tracks_found", "query": q}
+    first = items[0]
+    if not isinstance(first, dict):
+        return {"ok": False, "error": "invalid_search_item", "query": q}
+    track = _track_from_item(first)
+    if not track or not track.get("uri"):
+        return {"ok": False, "error": "missing_track_uri", "query": q}
+    uri = str(track["uri"])
+    play_r = _api_call("PUT", "/me/player/play", json={"uris": [uri]})
+    if play_r.status_code not in (200, 204):
+        msg = _spotify_error_message(play_r)
+        logger.warning("Spotify play-query playback | status=%s | body=%s", play_r.status_code, play_r.text[:200])
+        return {
+            "ok": False,
+            "error": "playback_failed",
+            "message": msg,
+            "query": q,
+            "track": track,
+            "spotify_status": play_r.status_code,
+            "hint": _playback_hint(play_r.status_code, msg),
+        }
+    return {"ok": True, "query": q, "track": track}
 
 
 @router.get("/spotify/search")

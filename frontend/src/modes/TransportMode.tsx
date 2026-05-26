@@ -1,17 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getTransportStats, postRoute, postTransportMap, searchStops, type TransportSearchMatch } from "../api/client";
+import {
+  getTransportStats,
+  postTransportGraph3DSession,
+  postRoute,
+  postShellClientLog,
+  postTransportMap,
+  searchStops,
+  type TransportSearchMatch,
+} from "../api/client";
+import { getExternalApiBase, getGraphXRViewerBase } from "../api/config";
 import { useAppStore } from "../store";
+import { lineSuffix, resolveEndpointFromMatches } from "../transport/atlasTransportResolve";
+import type { AtlasTransportActionSpec } from "../transport/atlasTransportTypes";
+import { specKeysProvided } from "../transport/atlasTransportTypes";
 import "./transport.css";
 
 const GRAPH_MODES = ["all", "metro", "rail", "tram", "bus", "other"] as const;
-
-/** One line → " · L7"; several (comma-separated from API) → " · Lines 7, 14". */
-function lineSuffix(line: string | null | undefined): string {
-  const t = line != null ? String(line).trim() : "";
-  if (!t) return "";
-  if (t.includes(",")) return ` · Lines ${t}`;
-  return ` · L${t}`;
-}
 
 export function TransportMode() {
   const graphMode = useAppStore((s) => s.transportGraphMode);
@@ -34,6 +38,7 @@ export function TransportMode() {
   const routeMeta = useAppStore((s) => s.transportRouteMeta);
   const setRouteErr = useAppStore((s) => s.setTransportRouteError);
   const setRouteMeta = useAppStore((s) => s.setTransportRouteMeta);
+  const setMode = useAppStore((s) => s.setMode);
 
   const [mapUrl, setMapUrl] = useState<string | null>(null);
   const [mapErr, setMapErr] = useState<string | null>(null);
@@ -54,8 +59,14 @@ export function TransportMode() {
   const [stopLookupErr, setStopLookupErr] = useState<string | null>(null);
   const [mapSelectedStopId, setMapSelectedStopId] = useState<string | null>(null);
   const [mapSelectedStationId, setMapSelectedStationId] = useState<string | null>(null);
+  const [graph3dErr, setGraph3dErr] = useState<string | null>(null);
+  const [launchingGraph3d, setLaunchingGraph3d] = useState(false);
+  const graph3dSessionCache = useRef<Map<string, string>>(new Map());
 
   const stationFirst = graphViz === "station";
+
+  const atlasTransportAction = useAppStore((s) => s.atlasTransportAction);
+  const setAtlasTransportAction = useAppStore((s) => s.setAtlasTransportAction);
 
   const autocompleteQ = dockTab === "search" ? stopLookupQ : searchQ;
 
@@ -168,21 +179,10 @@ export function TransportMode() {
     return () => window.clearTimeout(t);
   }, [autocompleteQ, graphMode, useLcc, stationFirst]);
 
-  async function computeRoute() {
-    setRouteErr(null);
-    setRouteMeta(null);
-    if (!startId || !endId) {
-      setRouteErr(stationFirst ? "Pick start and end stations." : "Pick start and end stops.");
-      return;
-    }
-    try {
-      const r = await postRoute(
-        graphMode,
-        useLcc,
-        stationFirst
-          ? { kind: "station", from_station_id: startId, to_station_id: endId }
-          : { kind: "stop", from_stop_id: startId, to_stop_id: endId }
-      );
+  type RouteResult = Awaited<ReturnType<typeof postRoute>>;
+
+  const applyRouteResult = useCallback(
+    (r: RouteResult) => {
       if (r.ok && r.path) {
         setPathIds(r.path);
         setStationPathIds(
@@ -215,6 +215,26 @@ export function TransportMode() {
         setStationPathIds(null);
         setRouteErr(r.error?.message ?? "Route failed");
       }
+    },
+    [setPathIds, setStationPathIds, setRouteErr, setRouteMeta]
+  );
+
+  async function computeRoute() {
+    setRouteErr(null);
+    setRouteMeta(null);
+    if (!startId || !endId) {
+      setRouteErr(stationFirst ? "Pick start and end stations." : "Pick start and end stops.");
+      return;
+    }
+    try {
+      const r = await postRoute(
+        graphMode,
+        useLcc,
+        stationFirst
+          ? { kind: "station", from_station_id: startId, to_station_id: endId }
+          : { kind: "stop", from_stop_id: startId, to_stop_id: endId }
+      );
+      applyRouteResult(r);
     } catch (e) {
       setRouteErr(e instanceof Error ? e.message : "Route failed");
     }
@@ -229,7 +249,377 @@ export function TransportMode() {
     setQEnd("");
     setRouteErr(null);
     setRouteMeta(null);
+    setGraph3dErr(null);
   }
+
+  async function openGraph3DViewer() {
+    setGraph3dErr(null);
+    setLaunchingGraph3d(true);
+    try {
+      const cacheKey = JSON.stringify({
+        mode: graphMode,
+        use_lcc: useLcc,
+        graph_viz_mode: graphViz,
+        path_stop_ids: pathIds ?? [],
+        path_station_ids: pathStationIds ?? [],
+      });
+      const cachedUrl = graph3dSessionCache.current.get(cacheKey);
+      if (cachedUrl) {
+        window.open(cachedUrl, "cspe-graphxr", "noopener,noreferrer,width=1280,height=860");
+        return;
+      }
+      const session = await postTransportGraph3DSession({
+        mode: graphMode,
+        use_lcc: useLcc,
+        graph_viz_mode: graphViz,
+        path_stop_ids: pathIds ?? [],
+        path_station_ids: pathStationIds ?? [],
+      });
+      const viewer = new URL(getGraphXRViewerBase());
+      viewer.searchParams.set("session", session.session_id);
+      viewer.searchParams.set("api", getExternalApiBase());
+      const nextUrl = viewer.toString();
+      graph3dSessionCache.current.set(cacheKey, nextUrl);
+      if (graph3dSessionCache.current.size > 12) {
+        const firstKey = graph3dSessionCache.current.keys().next().value;
+        if (firstKey) graph3dSessionCache.current.delete(firstKey);
+      }
+      window.open(nextUrl, "cspe-graphxr", "noopener,noreferrer,width=1280,height=860");
+    } catch (e) {
+      setGraph3dErr(e instanceof Error ? e.message : "Unable to open 3D/VR graph.");
+    } finally {
+      setLaunchingGraph3d(false);
+    }
+  }
+
+  function applyAtlasTransportPatches(spec: AtlasTransportActionSpec) {
+    if (spec.open_app_mode === "transport") setMode("transport");
+    if (spec.graph_mode !== undefined) setGraphMode(spec.graph_mode);
+    if (spec.use_lcc !== undefined) setUseLcc(spec.use_lcc);
+    if (spec.viz !== undefined) setViz(spec.viz);
+    if (spec.graph_viz !== undefined) {
+      setGraphViz(spec.graph_viz);
+    } else if (spec.routing_scope !== undefined) {
+      setGraphViz(spec.routing_scope === "station" ? "station" : "stop");
+    }
+    if (spec.show_transfers !== undefined) setShowTransfers(spec.show_transfers);
+    if (spec.dock_tab !== undefined) setDockTab(spec.dock_tab);
+    if (spec.route_focus !== undefined) setRouteFocus(spec.route_focus);
+    if (spec.from_query !== undefined) setQStart(spec.from_query);
+    if (spec.to_query !== undefined) setQEnd(spec.to_query);
+    if (spec.stop_lookup_query !== undefined) setStopLookupQ(spec.stop_lookup_query);
+  }
+
+  useEffect(() => {
+    const action = atlasTransportAction;
+    if (!action) return;
+    const { seq: mySeq, spec } = action;
+    let cancelled = false;
+
+    const keys = specKeysProvided(spec);
+    const zBefore = useAppStore.getState();
+    const stateBefore = {
+      app_mode: zBefore.mode,
+      transportGraphMode: zBefore.transportGraphMode,
+      transportUseLcc: zBefore.transportUseLcc,
+      transportViz: zBefore.transportViz,
+      transportGraphViz: zBefore.transportGraphViz,
+      transportShowTransfers: zBefore.transportShowTransfers,
+      local: {
+        dockTab,
+        routeFocus,
+        qStart,
+        qEnd,
+        stopLookupQ,
+      },
+    };
+
+    applyAtlasTransportPatches(spec);
+
+    const zAfter = useAppStore.getState();
+    const effFrom = spec.from_query !== undefined ? spec.from_query : qStart;
+    const effTo = spec.to_query !== undefined ? spec.to_query : qEnd;
+
+    const stateAfter = {
+      app_mode: zAfter.mode,
+      transportGraphMode: zAfter.transportGraphMode,
+      transportUseLcc: zAfter.transportUseLcc,
+      transportViz: zAfter.transportViz,
+      transportGraphViz: zAfter.transportGraphViz,
+      transportShowTransfers: zAfter.transportShowTransfers,
+      effective_from_query: effFrom,
+      effective_to_query: effTo,
+      dock_tab: spec.dock_tab ?? dockTab,
+    };
+
+    void postShellClientLog("atlas_transport_action", {
+      seq: mySeq,
+      keys_provided: keys,
+      spec,
+      state_before: stateBefore,
+      state_after: stateAfter,
+    });
+
+    const run = spec.run;
+    if (!run || run === "none") {
+      setAtlasTransportAction(null);
+      return;
+    }
+
+    if (run === "reset_route") {
+      clearRoute();
+      void postShellClientLog("atlas_transport_trigger", { seq: mySeq, trigger: "reset_route" });
+      setAtlasTransportAction(null);
+      return;
+    }
+    if (run === "compute") {
+      void postShellClientLog("atlas_transport_trigger", { seq: mySeq, trigger: "compute" });
+      void (async () => {
+        await computeRoute();
+        setAtlasTransportAction(null);
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }
+    if (run === "refresh_map") {
+      void refreshMap();
+      void postShellClientLog("atlas_transport_trigger", { seq: mySeq, trigger: "refresh_map" });
+      setAtlasTransportAction(null);
+      return;
+    }
+    if (run === "clear_map_highlight") {
+      setStopLookupErr(null);
+      setMapSelectedStopId(null);
+      setMapSelectedStationId(null);
+      setStopLookupQ("");
+      void refreshMap({ selectedStopId: null, selectedStationId: null });
+      void postShellClientLog("atlas_transport_trigger", { seq: mySeq, trigger: "clear_map_highlight" });
+      setAtlasTransportAction(null);
+      return;
+    }
+
+    if (run === "search_map") {
+      void (async () => {
+        const st = useAppStore.getState();
+        const gv = st.transportGraphViz;
+        const sf = gv === "station";
+        const qRaw = spec.stop_lookup_query !== undefined ? spec.stop_lookup_query : stopLookupQ;
+        const q = (qRaw ?? "").trim();
+        if (q.length < 2) {
+          setStopLookupErr("Type at least 2 characters.");
+          setAtlasTransportAction(null);
+          return;
+        }
+        setStopLookupErr(null);
+        try {
+          const r = await searchStops(q, st.transportGraphMode, st.transportUseLcc, sf);
+          const first = r.matches[0];
+          if (!first) {
+            setStopLookupErr(sf ? "No station found for that query." : "No stop found for that query.");
+            setMapSelectedStopId(null);
+            setMapSelectedStationId(null);
+            void refreshMap({ selectedStopId: null, selectedStationId: null });
+            void postShellClientLog("atlas_transport_trigger", {
+              seq: mySeq,
+              trigger: "search_map",
+              ok: false,
+              matches: 0,
+            });
+            setAtlasTransportAction(null);
+            return;
+          }
+          if (sf && first.station_id) {
+            setMapSelectedStationId(first.station_id);
+            setMapSelectedStopId(null);
+            const label = `${first.station_name ?? first.stop_name ?? ""}${lineSuffix(first.line)}`.trim();
+            setStopLookupQ(label);
+            setSuggestions([]);
+            void refreshMap({ selectedStationId: first.station_id, selectedStopId: null });
+          } else if (first.stop_id) {
+            setMapSelectedStopId(first.stop_id);
+            setMapSelectedStationId(null);
+            setStopLookupQ(`${first.stop_name ?? first.stop_id} | ${first.stop_id}`);
+            setSuggestions([]);
+            void refreshMap({ selectedStopId: first.stop_id, selectedStationId: null });
+          } else {
+            setStopLookupErr("No resolvable stop or station for that query.");
+          }
+          void postShellClientLog("atlas_transport_trigger", {
+            seq: mySeq,
+            trigger: "search_map",
+            ok: true,
+            matches: r.matches.length,
+          });
+        } catch {
+          setStopLookupErr("Search failed.");
+          void postShellClientLog("atlas_transport_trigger", { seq: mySeq, trigger: "search_map", ok: false });
+        } finally {
+          setAtlasTransportAction(null);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (run === "route") {
+      void (async () => {
+        const st0 = useAppStore.getState();
+        const gm = st0.transportGraphMode;
+        const ulcc = st0.transportUseLcc;
+        const gv = st0.transportGraphViz;
+        const stationFirstIv = gv === "station";
+        const fromQ = effFrom.trim();
+        const toQ = effTo.trim();
+        if (!fromQ || !toQ) {
+          setRouteErr("Origin and destination are required for route.");
+          void postShellClientLog("atlas_transport_trigger", {
+            seq: mySeq,
+            trigger: "route",
+            ok: false,
+            error: "missing_from_or_to",
+          });
+          setAtlasTransportAction(null);
+          return;
+        }
+
+        setDockTab("route");
+        setRouteFocus("start");
+        setStartId(null);
+        setEndId(null);
+        setRouteErr(null);
+        setRouteMeta(null);
+        setPathIds(null);
+        setStationPathIds(null);
+        setSuggestions([]);
+
+        const fromSearch = await searchStops(fromQ, gm, ulcc, stationFirstIv);
+        if (cancelled || useAppStore.getState().atlasTransportAction?.seq !== mySeq) return;
+
+        const fromRes = resolveEndpointFromMatches(fromQ, fromSearch.matches, stationFirstIv);
+        void postShellClientLog("from_resolved", {
+          seq: mySeq,
+          query: fromQ,
+          matches_count: fromSearch.matches.length,
+          result_kind: fromRes.kind,
+        });
+
+        if (fromRes.kind === "ambiguous") {
+          setSuggestions(fromRes.candidates);
+          setRouteErr(
+            stationFirstIv
+              ? "Multiple stations match the origin — pick one in the list below."
+              : "Multiple stops match the origin — pick one in the list below."
+          );
+          setAtlasTransportAction(null);
+          return;
+        }
+        if (fromRes.kind === "none") {
+          setRouteErr(
+            stationFirstIv ? "No origin station found for that query." : "No origin stop found for that query."
+          );
+          setAtlasTransportAction(null);
+          return;
+        }
+
+        setStartId(fromRes.id);
+        setQStart(fromRes.label);
+        setRouteFocus("end");
+
+        const toSearch = await searchStops(toQ, gm, ulcc, stationFirstIv);
+        if (cancelled || useAppStore.getState().atlasTransportAction?.seq !== mySeq) return;
+
+        const toRes = resolveEndpointFromMatches(toQ, toSearch.matches, stationFirstIv);
+        void postShellClientLog("to_resolved", {
+          seq: mySeq,
+          query: toQ,
+          matches_count: toSearch.matches.length,
+          result_kind: toRes.kind,
+        });
+
+        if (toRes.kind === "ambiguous") {
+          setSuggestions(toRes.candidates);
+          setRouteErr(
+            stationFirstIv
+              ? "Multiple stations match the destination — pick one in the list below."
+              : "Multiple stops match the destination — pick one in the list below."
+          );
+          setAtlasTransportAction(null);
+          return;
+        }
+        if (toRes.kind === "none") {
+          setRouteErr(
+            stationFirstIv
+              ? "No destination station found for that query."
+              : "No destination stop found for that query."
+          );
+          setAtlasTransportAction(null);
+          return;
+        }
+
+        setEndId(toRes.id);
+        setQEnd(toRes.label);
+
+        const routePayload = stationFirstIv
+          ? {
+              kind: "station" as const,
+              from_station_id: fromRes.id,
+              to_station_id: toRes.id,
+            }
+          : { kind: "stop" as const, from_stop_id: fromRes.id, to_stop_id: toRes.id };
+
+        void postShellClientLog("ui_route_payload", {
+          seq: mySeq,
+          mode: gm,
+          use_lcc: ulcc,
+          payload: routePayload,
+        });
+
+        try {
+          const r = await postRoute(gm, ulcc, routePayload);
+          if (cancelled || useAppStore.getState().atlasTransportAction?.seq !== mySeq) return;
+          void postShellClientLog("ui_route_result", {
+            seq: mySeq,
+            ok: r.ok,
+            routing_scope: r.routing_scope,
+            path_len: r.path?.length ?? 0,
+            error: r.error?.message ?? null,
+          });
+          void postShellClientLog("atlas_transport_trigger", { seq: mySeq, trigger: "route", ok: r.ok });
+          applyRouteResult(r);
+        } catch (e) {
+          setRouteErr(e instanceof Error ? e.message : "Route failed");
+          void postShellClientLog("ui_route_result", {
+            seq: mySeq,
+            ok: false,
+            error: e instanceof Error ? e.message : "Route failed",
+          });
+          void postShellClientLog("atlas_transport_trigger", {
+            seq: mySeq,
+            trigger: "route",
+            ok: false,
+          });
+        } finally {
+          setAtlasTransportAction(null);
+        }
+      })();
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    atlasTransportAction,
+    applyRouteResult,
+    setAtlasTransportAction,
+    dockTab,
+    routeFocus,
+    qStart,
+    qEnd,
+    stopLookupQ,
+    refreshMap,
+  ]);
 
   async function searchStopOnMap() {
     setStopLookupErr(null);
@@ -308,7 +698,21 @@ export function TransportMode() {
             >
               3D network
             </button>
+            <button
+              type="button"
+              className="transport-btn-viz"
+              onClick={() => void openGraph3DViewer()}
+              disabled={launchingGraph3d}
+              title={
+                pathIds && pathIds.length > 0
+                  ? "Open the full graph in GraphXR with this route highlighted"
+                  : "Open the full graph in GraphXR"
+              }
+            >
+              {launchingGraph3d ? "Opening..." : "3D/VR graph"}
+            </button>
           </div>
+          {graph3dErr && <div className="transport-route-err">{graph3dErr}</div>}
 
           <div className="transport-section-label">Graph layer</div>
           <div className="transport-pill-row">

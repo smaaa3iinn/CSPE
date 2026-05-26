@@ -12,6 +12,21 @@ export function getApiBase(): string {
   return String(raw).replace(/\/$/, "");
 }
 
+/** Absolute API base for external windows that cannot use this Vite app's relative `/api` proxy. */
+export function getExternalApiBase(): string {
+  const direct = getApiBase();
+  if (direct) return direct;
+  const proxyTarget = import.meta.env.VITE_DEV_PROXY_TARGET || import.meta.env.PRODUCT_SHELL_URL;
+  if (proxyTarget && String(proxyTarget).trim()) return String(proxyTarget).replace(/\/$/, "");
+  return "http://127.0.0.1:8787";
+}
+
+export function getGraphXRViewerBase(): string {
+  const raw = import.meta.env.VITE_GRAPHXR_VIEWER_URL || import.meta.env.VITE_A25_VIEWER_URL;
+  if (raw && String(raw).trim()) return String(raw).replace(/\/$/, "");
+  return "http://localhost:3000/viewer";
+}
+
 /** Prefix a path (must start with `/`) with `VITE_API_BASE` when set. */
 export function apiUrl(path: string): string {
   const base = getApiBase();

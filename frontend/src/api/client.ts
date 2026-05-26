@@ -62,6 +62,24 @@ export async function postTransportMap(body: Record<string, unknown>): Promise<{
   return r.json();
 }
 
+export async function postTransportGraph3DSession(body: Record<string, unknown>): Promise<{
+  session_id: string;
+  graph_url: string;
+  expires_in_s: number;
+  metadata: Record<string, unknown>;
+}> {
+  const r = await fetch(apiUrl("/api/transport/graph3d/session"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(t || `graph3d session ${r.status}`);
+  }
+  return r.json();
+}
+
 export async function getTransportStats(mode: string, useLcc: boolean) {
   const q = new URLSearchParams({ mode, use_lcc: String(useLcc) });
   const r = await fetch(apiUrl(`/api/transport/stats?${q}`));
@@ -128,6 +146,19 @@ export async function postRoute(
     detail?: { entry_stop_id?: string | null; exit_stop_id?: string | null } | null;
     error: { message: string; details?: string[] } | null;
   }>;
+}
+
+/** Structured logs for Atlas-driven transport (see product_ui_transport.log on the API host). */
+export async function postShellClientLog(event: string, data: Record<string, unknown>): Promise<void> {
+  try {
+    await fetch(apiUrl("/api/shell/client-log"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event, data }),
+    });
+  } catch {
+    /* offline */
+  }
 }
 
 export type MemoryProjectDto = {

@@ -1,11 +1,16 @@
 """
-Transport / CSPE map rendering — reuses graph bundle and plot_mapbox (same pipeline as Streamlit).
+Transport / CSPE map rendering — graph bundle and plot_mapbox (shared with historical data pipeline).
 """
 
 from __future__ import annotations
 
 import os
 import sys
+import time
+import uuid
+import hashlib
+import json
+from collections import OrderedDict
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -39,6 +44,28 @@ RENDER_GRAPH_PATHS = {
     "metro": str(ROOT / "data" / "derived" / "render_graphs" / "metro.render_graph.json"),
     "rail": str(ROOT / "data" / "derived" / "render_graphs" / "rail.render_graph.json"),
     "tram": str(ROOT / "data" / "derived" / "render_graphs" / "tram.render_graph.json"),
+}
+GRAPH3D_SESSION_TTL_S = 30 * 60
+_GRAPH3D_SESSIONS: dict[str, tuple[float, dict[str, Any]]] = {}
+_MAP_HTML_CACHE_MAX = 24
+_MAP_HTML_CACHE: OrderedDict[tuple[Any, ...], tuple[str, str | None]] = OrderedDict()
+_MAP_DISK_CACHE_VERSION = "map-html-v2"
+MAP_HTML_CACHE_DIR = ROOT / "data" / "derived" / "product_shell" / "map_html_cache"
+GRAPH3D_MODE_LAYER_Y = {
+    "bus": -960.0,
+    "tram": -480.0,
+    "rail": 0.0,
+    "metro": 480.0,
+    "other": 960.0,
+    "multi": 1440.0,
+}
+GRAPH3D_MODE_COLORS = {
+    "bus": "#22c55e",
+    "tram": "#a855f7",
+    "rail": "#f59e0b",
+    "metro": "#38bdf8",
+    "other": "#94a3b8",
+    "multi": "#f472b6",
 }
 
 
@@ -104,12 +131,446 @@ def default_basemap_style() -> str:
     )
 
 
+def _map_cache_get(key: tuple[Any, ...]) -> tuple[str, str | None] | None:
+    cached = _MAP_HTML_CACHE.get(key)
+    if cached is None:
+        return None
+    _MAP_HTML_CACHE.move_to_end(key)
+    return cached
+
+
+def _map_cache_set(key: tuple[Any, ...], value: tuple[str, str | None]) -> None:
+    _MAP_HTML_CACHE[key] = value
+    _MAP_HTML_CACHE.move_to_end(key)
+    while len(_MAP_HTML_CACHE) > _MAP_HTML_CACHE_MAX:
+        _MAP_HTML_CACHE.popitem(last=False)
+
+
+def _static_map_cacheable(
+    *,
+    path_stop_ids: list[str] | None,
+    path_station_ids: list[str] | None,
+    selected_stop_id: str | None,
+    selected_station_id: str | None,
+    expanded_station_id: str | None,
+    poi_category_key: str | None,
+) -> bool:
+    return not any(
+        [
+            _tuple_or_empty(path_stop_ids),
+            _tuple_or_empty(path_station_ids),
+            (selected_stop_id or "").strip(),
+            (selected_station_id or "").strip(),
+            (expanded_station_id or "").strip(),
+            poi_category_key and poi_category_key != "All",
+        ]
+    )
+
+
+def _source_mtime_ns(path: str | Path) -> int:
+    try:
+        return Path(path).stat().st_mtime_ns
+    except OSError:
+        return 0
+
+
+def _disk_map_cache_payload(
+    cache_key: tuple[Any, ...],
+    *,
+    token: str,
+    token_src: str | None,
+) -> dict[str, Any]:
+    return {
+        "schema": _MAP_DISK_CACHE_VERSION,
+        "key": cache_key,
+        "token_src": token_src,
+        "token_hash": hashlib.sha256(token.encode("utf-8")).hexdigest()[:16],
+        "bundle_mtime_ns": _source_mtime_ns(BUNDLE_PATH),
+        "render_graph_mtimes": {
+            mode_name: _source_mtime_ns(path) for mode_name, path in RENDER_GRAPH_PATHS.items()
+        },
+    }
+
+
+def _disk_map_cache_path(payload: dict[str, Any]) -> Path:
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return MAP_HTML_CACHE_DIR / f"{digest}.json"
+
+
+def _disk_map_cache_get(
+    cache_key: tuple[Any, ...], *, token: str, token_src: str | None
+) -> tuple[str, str | None] | None:
+    payload = _disk_map_cache_payload(cache_key, token=token, token_src=token_src)
+    path = _disk_map_cache_path(payload)
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return None
+    html = data.get("html")
+    if not isinstance(html, str):
+        return None
+    src = data.get("token_src")
+    return html, str(src) if src is not None else None
+
+
+def _disk_map_cache_set(
+    cache_key: tuple[Any, ...],
+    value: tuple[str, str | None],
+    *,
+    token: str,
+    token_src: str | None,
+) -> None:
+    payload = _disk_map_cache_payload(cache_key, token=token, token_src=token_src)
+    path = _disk_map_cache_path(payload)
+    try:
+        MAP_HTML_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        with tmp.open("w", encoding="utf-8") as fh:
+            json.dump({"html": value[0], "token_src": value[1]}, fh, ensure_ascii=False)
+        tmp.replace(path)
+    except OSError:
+        return
+
+
+def _tuple_or_empty(values: list[str] | None) -> tuple[str, ...]:
+    return tuple(str(x) for x in (values or []) if str(x).strip())
+
+
 def graph_for(mode: str, use_lcc: bool) -> Any:
     bundle = get_bundle()
     graphs = bundle["graphs"]
     graphs_lcc = bundle["graphs_lcc"]
     G = (graphs_lcc if use_lcc else graphs)[mode]
     return G
+
+
+def _clean_graph3d_sessions(now: float | None = None) -> None:
+    ts = time.time() if now is None else now
+    expired = [sid for sid, (expires_at, _) in _GRAPH3D_SESSIONS.items() if expires_at <= ts]
+    for sid in expired:
+        _GRAPH3D_SESSIONS.pop(sid, None)
+
+
+def _node_label(attrs: dict[str, Any], fallback: str) -> str:
+    for key in ("stop_name", "station_name", "name", "label"):
+        value = attrs.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return fallback
+
+
+def _node_lon_lat(attrs: dict[str, Any]) -> tuple[float, float] | None:
+    lon = attrs.get("lon", attrs.get("longitude"))
+    lat = attrs.get("lat", attrs.get("latitude"))
+    if lon is None or lat is None:
+        return None
+    try:
+        return float(lon), float(lat)
+    except (TypeError, ValueError):
+        return None
+
+
+def _scaled_positions(raw: list[tuple[str, float, float, int]]) -> dict[str, tuple[float, float, float]]:
+    if not raw:
+        return {}
+    lons = [lon for _, lon, _, _ in raw]
+    lats = [lat for _, _, lat, _ in raw]
+    lon_mid = (min(lons) + max(lons)) / 2.0
+    lat_mid = (min(lats) + max(lats)) / 2.0
+    span = max(max(lons) - min(lons), max(lats) - min(lats), 0.0001)
+    scale = 180.0 / span
+    out: dict[str, tuple[float, float, float]] = {}
+    for node_id, lon, lat, degree in raw:
+        x = (lon - lon_mid) * scale
+        z = -(lat - lat_mid) * scale
+        y = min(18.0, max(0.0, float(degree) ** 0.5)) * 0.9
+        out[node_id] = (x, y, z)
+    return out
+
+
+def _mode_layer_y(mode_name: str) -> float:
+    return GRAPH3D_MODE_LAYER_Y.get(mode_name, GRAPH3D_MODE_LAYER_Y["other"])
+
+
+def _line_modes(lines: Any) -> list[str]:
+    if not isinstance(lines, dict):
+        return []
+    out: list[str] = []
+    for mode_name in ("metro", "rail", "tram", "bus"):
+        values = lines.get(mode_name)
+        if isinstance(values, (list, tuple, set)) and len(values) > 0:
+            out.append(mode_name)
+        elif isinstance(values, str) and values.strip():
+            out.append(mode_name)
+    return out
+
+
+def _primary_mode_from_counts(counts: dict[str, int]) -> str:
+    if not counts:
+        return "other"
+    winners = sorted(
+        counts.items(),
+        key=lambda kv: (-kv[1], ("metro", "rail", "tram", "bus", "other").index(kv[0]) if kv[0] in ("metro", "rail", "tram", "bus", "other") else 99),
+    )
+    return winners[0][0] if winners else "other"
+
+
+def _node_transport_mode(attrs: dict[str, Any]) -> str:
+    modes = _line_modes(attrs.get("lines"))
+    if modes:
+        return modes[0] if len(modes) == 1 else _primary_mode_from_counts({m: 1 for m in modes})
+    mode_value = attrs.get("mode") or attrs.get("modes")
+    if mode_value:
+        first = str(mode_value).split("|")[0].strip()
+        return first if first in GRAPH3D_MODE_LAYER_Y else "other"
+    return "other"
+
+
+def _station_transport_mode(G: Any, stop_ids: list[str]) -> str:
+    counts: dict[str, int] = {}
+    for stop_id in stop_ids:
+        if stop_id not in G:
+            continue
+        for mode_name in _line_modes(dict(G.nodes[stop_id] or {}).get("lines")):
+            counts[mode_name] = counts.get(mode_name, 0) + 1
+    return _primary_mode_from_counts(counts)
+
+
+def _fallback_positions(node_ids: list[str]) -> dict[str, tuple[float, float, float]]:
+    import math
+
+    total = max(1, len(node_ids))
+    radius = max(30.0, min(160.0, total * 0.06))
+    out: dict[str, tuple[float, float, float]] = {}
+    for i, node_id in enumerate(node_ids):
+        angle = (2.0 * math.pi * i) / total
+        layer = (i % 7) - 3
+        out[node_id] = (math.cos(angle) * radius, layer * 3.0, math.sin(angle) * radius)
+    return out
+
+
+def _edge_iter(G: Any):
+    for item in G.edges(data=True):
+        if len(item) == 3:
+            u, v, data = item
+            yield str(u), str(v), dict(data or {})
+
+
+def _edge_route_key(a: str, b: str) -> tuple[str, str]:
+    return (a, b) if a <= b else (b, a)
+
+
+def _jsonish(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (list, tuple, set)):
+        return [str(v) for v in value]
+    return str(value)
+
+
+def _base_graph3d_metadata(mode: str, use_lcc: bool, graph_viz_mode: str) -> dict[str, Any]:
+    bundle = get_bundle()
+    return {
+        "source": "cspe",
+        "mode": mode,
+        "use_lcc": use_lcc,
+        "graph_viz_mode": graph_viz_mode,
+        "cache_version": bundle.get("cache_version"),
+    }
+
+
+@lru_cache(maxsize=24)
+def _base_graph3d_project(mode: str, use_lcc: bool, graph_viz_mode: str) -> dict[str, Any]:
+    gv = graph_viz_mode if graph_viz_mode in ("stop", "station", "hybrid") else "stop"
+    G = graph_for(mode, use_lcc)
+    idx = station_layer_for(mode, use_lcc)
+    use_station_graph = gv == "station"
+    layered_by_transport_mode = mode == "all"
+
+    if use_station_graph:
+        station_edges = aggregate_station_edges(G, idx)
+        node_ids = sorted(idx.station_to_stops.keys())
+        raw_positions = [
+            (sid, lon, lat, len(idx.station_to_stops.get(sid, [])))
+            for sid, (lon, lat) in idx.station_centroid.items()
+            if sid in idx.station_to_stops
+        ]
+        positions = _scaled_positions(raw_positions) or _fallback_positions(node_ids)
+        nodes = []
+        for sid in node_ids:
+            stop_count = len(idx.station_to_stops.get(sid, []))
+            transport_mode = _station_transport_mode(G, idx.station_to_stops.get(sid, []))
+            x, y, z = positions.get(sid, (0.0, 0.0, 0.0))
+            if layered_by_transport_mode:
+                y = _mode_layer_y(transport_mode)
+            nodes.append(
+                {
+                    "id": sid,
+                    "label": idx.station_label.get(sid, sid),
+                    "x": x,
+                    "y": y,
+                    "z": z,
+                    "color": GRAPH3D_MODE_COLORS.get(transport_mode, GRAPH3D_MODE_COLORS["other"]),
+                    "kind": "station",
+                    "transport_mode": transport_mode,
+                    "layer_y": y,
+                    "stop_count": stop_count,
+                }
+            )
+        edges = [
+            {
+                "id": f"{a}-{b}",
+                "source": a,
+                "target": b,
+                "weight": attrs.get("weight", 1),
+                "kind": "station_link",
+                "mode": _jsonish(attrs.get("mode")),
+                "color": GRAPH3D_MODE_COLORS.get(str(attrs.get("mode") or "other").split("|")[0], "#8b5cf6"),
+            }
+            for a, b, attrs in station_edges
+            if a in positions and b in positions
+        ]
+    else:
+        node_ids = [str(n) for n in G.nodes()]
+        raw_positions = []
+        for node_id, attrs in G.nodes(data=True):
+            sid = str(node_id)
+            lon_lat = _node_lon_lat(dict(attrs or {}))
+            if lon_lat:
+                raw_positions.append((sid, lon_lat[0], lon_lat[1], int(G.degree(node_id))))
+        positions = _scaled_positions(raw_positions) or _fallback_positions(node_ids)
+        nodes = []
+        for node_id, attrs in G.nodes(data=True):
+            sid = str(node_id)
+            attr = dict(attrs or {})
+            x, y, z = positions.get(sid, (0.0, 0.0, 0.0))
+            transport_mode = _node_transport_mode(attr)
+            if layered_by_transport_mode:
+                y = _mode_layer_y(transport_mode)
+            nodes.append(
+                {
+                    "id": sid,
+                    "label": _node_label(attr, sid),
+                    "x": x,
+                    "y": y,
+                    "z": z,
+                    "color": GRAPH3D_MODE_COLORS.get(transport_mode, GRAPH3D_MODE_COLORS["other"]),
+                    "kind": "stop",
+                    "transport_mode": transport_mode,
+                    "layer_y": y,
+                    "station_id": idx.stop_to_station.get(sid),
+                    "line": _jsonish(attr.get("line")),
+                    "mode": _jsonish(attr.get("mode")),
+                }
+            )
+        edges = []
+        for u, v, attrs in _edge_iter(G):
+            if u not in positions or v not in positions:
+                continue
+            edge_mode = str(attrs.get("mode") or attrs.get("modes") or "other").split("|")[0]
+            edges.append(
+                {
+                    "id": f"{u}-{v}",
+                    "source": u,
+                    "target": v,
+                    "weight": attrs.get("weight", attrs.get("distance_m", 1)),
+                    "kind": _jsonish(attrs.get("kind")),
+                    "mode": _jsonish(attrs.get("mode")),
+                    "color": GRAPH3D_MODE_COLORS.get(edge_mode, "#8b5cf6"),
+                    "route_ids": _jsonish(attrs.get("route_ids")),
+                }
+            )
+
+    metadata = _base_graph3d_metadata(mode, use_lcc, gv)
+    metadata.update(
+        {
+            "nodes": len(nodes),
+            "edges": len(edges),
+            "layout": "cached_geo_3d",
+            "large_graph": len(nodes) > 5000 or len(edges) > 10000,
+            "layered_by_transport_mode": layered_by_transport_mode,
+            "mode_layer_axis": "y",
+            "mode_layer_y": GRAPH3D_MODE_LAYER_Y if layered_by_transport_mode else {},
+        }
+    )
+    return {
+        "id": f"cspe-{mode}-{gv}-{'lcc' if use_lcc else 'full'}",
+        "name": f"CSPE {mode} {gv} graph",
+        "metadata": metadata,
+        "algorithm": "cached_geo_3d",
+        "source_file_name": "CSPE transport graph",
+        "graph_data": {"nodes": nodes, "edges": edges, "metadata": metadata},
+    }
+
+
+def create_graph3d_session(
+    *,
+    mode: str,
+    use_lcc: bool,
+    graph_viz_mode: str,
+    path_stop_ids: list[str] | None,
+    path_station_ids: list[str] | None,
+) -> dict[str, Any]:
+    gv = graph_viz_mode if graph_viz_mode in ("stop", "station", "hybrid") else "stop"
+    base = _base_graph3d_project(mode, use_lcc, gv)
+    route_ids = [str(x) for x in (path_station_ids if gv == "station" else path_stop_ids) or [] if str(x)]
+    route_node_set = set(route_ids)
+    route_node_order = {node_id: idx for idx, node_id in enumerate(route_ids)}
+    route_edge_order = {
+        _edge_route_key(a, b): idx for idx, (a, b) in enumerate(zip(route_ids, route_ids[1:]))
+    }
+
+    graph_data = base["graph_data"]
+    nodes = []
+    for node in graph_data["nodes"]:
+        item = dict(node)
+        if item["id"] in route_node_set:
+            item["is_route"] = True
+            item["route_index"] = route_node_order.get(item["id"], 0)
+            item["color"] = "#f97316"
+        nodes.append(item)
+
+    edges = []
+    for edge in graph_data["edges"]:
+        item = dict(edge)
+        key = _edge_route_key(str(item["source"]), str(item["target"]))
+        if key in route_edge_order:
+            item["is_route"] = True
+            item["route_index"] = route_edge_order[key]
+            item["color"] = "#f97316"
+            item["weight"] = max(float(item.get("weight") or 1), 4.0)
+        edges.append(item)
+
+    metadata = dict(base["metadata"])
+    metadata.update(
+        {
+            "route_node_count": len(route_ids),
+            "route_edge_count": len(route_edge_order),
+            "has_route": bool(route_ids),
+        }
+    )
+    project = {
+        **base,
+        "id": f"{base['id']}-{uuid.uuid4().hex[:8]}",
+        "metadata": metadata,
+        "graph_data": {"nodes": nodes, "edges": edges, "metadata": metadata},
+    }
+
+    now = time.time()
+    _clean_graph3d_sessions(now)
+    session_id = uuid.uuid4().hex
+    _GRAPH3D_SESSIONS[session_id] = (now + GRAPH3D_SESSION_TTL_S, project)
+    return {"session_id": session_id, "project": project, "expires_in_s": GRAPH3D_SESSION_TTL_S}
+
+
+def get_graph3d_session(session_id: str) -> dict[str, Any] | None:
+    _clean_graph3d_sessions()
+    row = _GRAPH3D_SESSIONS.get(str(session_id).strip())
+    if not row:
+        return None
+    return row[1]
 
 
 @lru_cache(maxsize=32)
@@ -137,11 +598,48 @@ def render_transport_map_html(
 ) -> tuple[str, str | None]:
     from src.viz.plot_mapbox import render_mapbox_gl_html
 
+    gv_cache = (graph_viz_mode or "stop").strip().lower()
+    if gv_cache not in ("stop", "station", "hybrid"):
+        gv_cache = "stop"
+    cache_key = (
+        mode,
+        bool(use_lcc),
+        viz_mode,
+        _tuple_or_empty(path_stop_ids),
+        (selected_stop_id or "").strip(),
+        (selected_station_id or "").strip(),
+        bool(show_transfers),
+        int(poi_radius_m),
+        int(poi_limit),
+        poi_category_key or "",
+        gv_cache,
+        (expanded_station_id or "").strip(),
+        _tuple_or_empty(path_station_ids),
+        default_basemap_style(),
+    )
+    cached = _map_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     token, token_src = get_mapbox_token()
     if not token:
         raise RuntimeError(
             "Mapbox token missing: set MAPBOX_TOKEN, MAPBOX_API_KEY, or MAPBOX_ACCESS_TOKEN."
         )
+
+    use_disk_cache = _static_map_cacheable(
+        path_stop_ids=path_stop_ids,
+        path_station_ids=path_station_ids,
+        selected_stop_id=selected_stop_id,
+        selected_station_id=selected_station_id,
+        expanded_station_id=expanded_station_id,
+        poi_category_key=poi_category_key,
+    )
+    if use_disk_cache:
+        disk_cached = _disk_map_cache_get(cache_key, token=token, token_src=token_src)
+        if disk_cached is not None:
+            _map_cache_set(cache_key, disk_cached)
+            return disk_cached
 
     G = graph_for(mode, use_lcc)
     idx = station_layer_for(mode, use_lcc)
@@ -193,8 +691,13 @@ def render_transport_map_html(
         station_network_lines=st_lines,
         suppress_stop_markers=(gv == "station"),
         suppress_base_network=route_focus,
+        station_layer_index=idx if gv != "stop" else None,
     )
-    return map_html, token_src
+    result = (map_html, token_src)
+    _map_cache_set(cache_key, result)
+    if use_disk_cache:
+        _disk_map_cache_set(cache_key, result, token=token, token_src=token_src)
+    return result
 
 
 def search_stops(

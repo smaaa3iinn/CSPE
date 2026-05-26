@@ -62,6 +62,21 @@ class TransportRouteResponse(BaseModel):
     error: dict[str, Any] | None = None
 
 
+class TransportGraph3DSessionRequest(BaseModel):
+    mode: Literal["all", "metro", "rail", "tram", "bus", "other"] = "metro"
+    use_lcc: bool = True
+    graph_viz_mode: Literal["stop", "station", "hybrid"] = "stop"
+    path_stop_ids: list[str] | None = None
+    path_station_ids: list[str] | None = None
+
+
+class TransportGraph3DSessionResponse(BaseModel):
+    session_id: str
+    graph_url: str
+    expires_in_s: int
+    metadata: dict[str, Any]
+
+
 class TransportStatsResponse(BaseModel):
     mode: str
     use_lcc: bool

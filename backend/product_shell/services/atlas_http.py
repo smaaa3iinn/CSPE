@@ -1,6 +1,6 @@
 """
-HTTP client for Atlas Flask API (no Streamlit).
-Mirrors app/atlas_bridge.py without UI session sync.
+HTTP client for Atlas Flask API (5055).
+Used by the FastAPI product shell for chat and /ui polling.
 """
 
 from __future__ import annotations
