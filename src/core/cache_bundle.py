@@ -7,7 +7,9 @@ from typing import Any
 import networkx as nx
 import pandas as pd
 
-CACHE_VERSION = 3
+from src.core.graph_loader import EDGE_COLUMNS, build_graphs_by_mode
+
+CACHE_VERSION = 5
 GRAPH_MODES = ("all", "metro", "rail", "tram", "bus", "other")
 
 
@@ -71,14 +73,101 @@ def _node_attrs(
     return popup
 
 
+def _edge_has_enriched_format(edges_clean: list[dict[str, Any]]) -> bool:
+    if not edges_clean:
+        return False
+    sample = edges_clean[0]
+    if str(sample.get("edge_kind") or "").strip():
+        return True
+    return "a" in sample and "b" in sample
+
+
+def _edges_list_to_dataframe(edges_clean: list[dict[str, Any]]) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for edge in edges_clean:
+        a = str(edge.get("a") or edge.get("source") or "")
+        b = str(edge.get("b") or edge.get("target") or "")
+        if not a or not b or a == b:
+            continue
+        edge_kind = str(edge.get("edge_kind") or "ride")
+        mode = str(edge.get("mode") or edge.get("edge_mode") or "other")
+        modes = str(edge.get("modes") or mode)
+        route_ids = edge.get("route_ids")
+        if route_ids is None and edge.get("route_id"):
+            route_ids = [str(edge.get("route_id"))]
+        if not isinstance(route_ids, list):
+            route_ids = []
+        route_labels = edge.get("route_labels")
+        if not isinstance(route_labels, list):
+            route_labels = []
+        route_refs = edge.get("route_refs")
+        if not isinstance(route_refs, list):
+            route_refs = []
+        rows.append(
+            {
+                "a": a,
+                "b": b,
+                "edge_kind": edge_kind,
+                "mode": mode,
+                "modes": modes,
+                "route_ids": route_ids,
+                "route_labels": route_labels,
+                "route_refs": route_refs,
+                "distance_m": edge.get("distance_m", float("nan")),
+                "time_s": edge.get("time_s", float("nan")),
+                "cost": edge.get("cost", float("nan")),
+                "weight_m": edge.get("weight_m", edge.get("distance_m", float("nan"))),
+            }
+        )
+    if not rows:
+        return pd.DataFrame(columns=EDGE_COLUMNS)
+    return pd.DataFrame(rows, columns=EDGE_COLUMNS)
+
+
+def _pos_dict_to_dataframe(
+    pos_all: dict[str, tuple[float, float]],
+    stop_popup_index: dict[str, dict[str, Any]],
+) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for stop_id, coords in pos_all.items():
+        popup = stop_popup_index.get(str(stop_id), {})
+        rows.append(
+            {
+                "stop_id": str(stop_id),
+                "stop_name": str(popup.get("stop_name") or stop_id),
+                "stop_lat": float(coords[1]),
+                "stop_lon": float(coords[0]),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _apply_popup_index_to_graphs(
+    graphs: dict[str, nx.Graph],
+    *,
+    stop_popup_index: dict[str, dict[str, Any]],
+    pos_all: dict[str, tuple[float, float]],
+) -> None:
+    for graph in graphs.values():
+        for stop_id in list(graph.nodes()):
+            graph.nodes[stop_id].update(
+                _node_attrs(str(stop_id), stop_popup_index=stop_popup_index, pos_all=pos_all)
+            )
+
+
 def _edge_aggregates(edges_clean: list[dict[str, Any]]) -> dict[str, dict[tuple[str, str], dict[str, Any]]]:
     aggregates: dict[str, dict[tuple[str, str], dict[str, Any]]] = {mode: {} for mode in GRAPH_MODES}
 
     for edge in edges_clean:
-        source = str(edge.get("source") or "")
-        target = str(edge.get("target") or "")
+        source = str(edge.get("a") or edge.get("source") or "")
+        target = str(edge.get("b") or edge.get("target") or "")
+        if str(edge.get("edge_kind") or "ride") != "ride":
+            continue
         mode = str(edge.get("mode") or "other")
         route_id = str(edge.get("route_id") or "").strip()
+        route_ids = edge.get("route_ids") or []
+        if not route_id and isinstance(route_ids, list) and route_ids:
+            route_id = str(route_ids[0])
         if not source or not target or source == target:
             continue
 
@@ -152,14 +241,18 @@ def _build_graph(
     return G
 
 
-def _largest_connected_component_graph(G: nx.Graph) -> nx.Graph:
-    if G.number_of_nodes() == 0:
-        return G.copy()
-    components = list(nx.connected_components(G))
-    if not components:
-        return G.copy()
-    largest = max(components, key=len)
-    return G.subgraph(largest).copy()
+def _build_graphs_from_enriched_edges(
+    edges_clean: list[dict[str, Any]],
+    *,
+    stop_popup_index: dict[str, dict[str, Any]],
+    pos_all: dict[str, tuple[float, float]],
+) -> tuple[dict[str, nx.Graph], dict[str, nx.Graph]]:
+    edges_df = _edges_list_to_dataframe(edges_clean)
+    pos_df = _pos_dict_to_dataframe(pos_all, stop_popup_index)
+    graphs, graphs_lcc = build_graphs_by_mode(edges_df, pos_df)
+    _apply_popup_index_to_graphs(graphs, stop_popup_index=stop_popup_index, pos_all=pos_all)
+    _apply_popup_index_to_graphs(graphs_lcc, stop_popup_index=stop_popup_index, pos_all=pos_all)
+    return graphs, graphs_lcc
 
 
 def _build_bundle(bundle_path: str | Path, stop_popup_index_path: str | Path) -> dict[str, Any]:
@@ -169,21 +262,28 @@ def _build_bundle(bundle_path: str | Path, stop_popup_index_path: str | Path) ->
     pos_all = {str(stop_id): (float(coords[0]), float(coords[1])) for stop_id, coords in (raw_bundle.get("pos_all") or {}).items()}
     edges_clean = [dict(edge) for edge in list(raw_bundle.get("edges_clean") or [])]
     stop_popup_index = _load_stop_popup_index(stop_popup_index_path)
-    raw_graphs = raw_bundle.get("graphs") or {}
-    edge_aggregates = _edge_aggregates(edges_clean)
 
-    graphs: dict[str, nx.Graph] = {}
-    for mode in GRAPH_MODES:
-        adjacency = raw_graphs.get(mode) or {}
-        graphs[mode] = _build_graph(
-            adjacency,
-            mode=mode,
+    if _edge_has_enriched_format(edges_clean):
+        graphs, graphs_lcc = _build_graphs_from_enriched_edges(
+            edges_clean,
             stop_popup_index=stop_popup_index,
             pos_all=pos_all,
-            edge_aggregates=edge_aggregates.get(mode, {}),
         )
+    else:
+        raw_graphs = raw_bundle.get("graphs") or {}
+        edge_aggregates = _edge_aggregates(edges_clean)
+        graphs = {}
+        for mode in GRAPH_MODES:
+            adjacency = raw_graphs.get(mode) or {}
+            graphs[mode] = _build_graph(
+                adjacency,
+                mode=mode,
+                stop_popup_index=stop_popup_index,
+                pos_all=pos_all,
+                edge_aggregates=edge_aggregates.get(mode, {}),
+            )
+        graphs_lcc = {mode: _largest_connected_component_graph(graph) for mode, graph in graphs.items()}
 
-    graphs_lcc = {mode: _largest_connected_component_graph(graph) for mode, graph in graphs.items()}
     return {
         "cache_version": CACHE_VERSION,
         "pos_all": pos_all,
@@ -191,6 +291,16 @@ def _build_bundle(bundle_path: str | Path, stop_popup_index_path: str | Path) ->
         "graphs": graphs,
         "graphs_lcc": graphs_lcc,
     }
+
+
+def _largest_connected_component_graph(G: nx.Graph) -> nx.Graph:
+    if G.number_of_nodes() == 0:
+        return G.copy()
+    components = list(nx.connected_components(G))
+    if not components:
+        return G.copy()
+    largest = max(components, key=len)
+    return G.subgraph(largest).copy()
 
 
 def load_or_build_graph_bundle(

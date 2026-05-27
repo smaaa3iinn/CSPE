@@ -21,7 +21,9 @@ _load_local_env()
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.core.project_logs import configure_product_shell_logging, configure_uvicorn_loggers, log_http_line
+import time
+
+from src.core.project_logs import configure_product_shell_logging, configure_uvicorn_loggers, log_http_line, log_startup
 
 configure_product_shell_logging()
 configure_uvicorn_loggers()
@@ -33,9 +35,22 @@ app = FastAPI(title="CSPE Product Shell API", version="0.1.0")
 
 @app.middleware("http")
 async def _project_log_middleware(request: Request, call_next):
+    t0 = time.perf_counter()
     response = await call_next(request)
-    log_http_line("product_shell", request.method, request.url.path, response.status_code)
+    duration_ms = (time.perf_counter() - t0) * 1000.0
+    log_http_line(
+        "product_shell",
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration_ms=duration_ms,
+    )
     return response
+
+
+@app.on_event("startup")
+def _log_product_shell_ready() -> None:
+    log_startup("Product shell ready on :8787")
 
 _origins = os.getenv(
     "PRODUCT_SHELL_CORS_ORIGINS",
@@ -87,5 +102,6 @@ def health() -> dict:
             "agent_planner": True,
             "agent_context": True,
             "shell_sse": True,
+            "transport_exploration": True,
         },
     }

@@ -76,6 +76,16 @@ def post_agent_transport_route(body: AgentTransportRouteRequest) -> AgentTranspo
             use_lcc=body.use_lcc,
             graph_viz_mode=body.graph_viz_mode,
         )
+        if graph3d.get("ok") and graph3d.get("sync_client_id"):
+            shell_queued += shell_router.enqueue_commands(
+                [
+                    {
+                        "kind": "transport_graph3d_sync",
+                        "sync_client_id": graph3d["sync_client_id"],
+                        "enabled": True,
+                    }
+                ]
+            )
 
     return AgentTransportRouteResponse(
         ok=bool(result.get("ok")),

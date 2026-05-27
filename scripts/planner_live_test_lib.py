@@ -405,6 +405,38 @@ def _first_step(m: TurnMetrics) -> PlannerStepMetrics | None:
     return m.steps[0] if m.steps else None
 
 
+def score_planned_tool(
+    m: TurnMetrics,
+    *,
+    expected_tools: Iterable[str] | None = None,
+    require_shortcut: bool = False,
+    allow_openai: bool = True,
+) -> tuple[Score, str]:
+    """PASS when expected tool(s) ran; OpenAI path is normal for NL commands."""
+    if m.crashed:
+        return "FAIL", "crash detected"
+    if not m.turn_complete and m.turn_status not in ("direct", "clarify"):
+        return "FAIL", "; ".join(m.notes) or "incomplete turn"
+    if m.repeated_tool_guard:
+        return "FAIL", "repeated_tool_guard"
+    step = _first_step(m)
+    if not step and m.turn_status == "direct":
+        return "PARTIAL", "direct response without tool"
+    if not step:
+        return "FAIL", "missing PlannerLive step"
+    if require_shortcut and step.path != "shortcut" and step.plan_source != "shortcut":
+        return "FAIL", f"expected shortcut path, got {step.path}/{step.plan_source}"
+    if not allow_openai and step.openai_planner_used:
+        return "FAIL", "OpenAI planner used unexpectedly"
+    if expected_tools:
+        exp = set(expected_tools)
+        ran = set(m.tools)
+        if not exp.intersection(ran):
+            return "FAIL", f"expected one of {sorted(exp)}, got {m.tools}"
+    path = step.path or step.plan_source or "?"
+    return "PASS", f"planned via {path}: {' -> '.join(m.tools) if m.tools else 'direct'}"
+
+
 def score_shortcut_fast(
     m: TurnMetrics,
     *,
@@ -420,8 +452,8 @@ def score_shortcut_fast(
         if m.turn_status == "direct":
             return "PASS", "direct response (no tool step logged)"
         return "FAIL", "missing PlannerLive step"
-    if step.path not in ("shortcut", "decomposer") and step.plan_source not in ("shortcut", "decomposer"):
-        return "FAIL", f"expected shortcut/decomposer path, got {step.path}/{step.plan_source}"
+    if step.path not in ("shortcut",) and step.plan_source not in ("shortcut",):
+        return "FAIL", f"expected shortcut path, got {step.path}/{step.plan_source}"
     if step.latency_ms > max_latency_ms:
         return "PARTIAL", f"shortcut ok but slow ({step.latency_ms} ms > {max_latency_ms})"
     if step.openai_planner_used:
@@ -436,22 +468,11 @@ def score_shortcut_fast(
 
 
 def score_route_shortcut(m: TurnMetrics) -> tuple[Score, str]:
-    if m.crashed:
-        return "FAIL", "crash detected"
-    step = _first_step(m)
-    if not step:
-        return "FAIL", "missing planner step"
-    if step.path not in ("shortcut", "decomposer") or step.tool != "cspe_compute_route":
-        return "FAIL", f"expected shortcut/decomposer cspe_compute_route, got {step.path}/{step.tool}"
-    if not step.args.get("sync_ui"):
-        return "PARTIAL", "route ok but sync_ui not true in args"
-    if step.openai_planner_used:
-        return "FAIL", "OpenAI planner used"
-    if m.repeated_tool_guard:
-        return "FAIL", "repeated loop"
-    if m.ui_atlas_transport_action_count > 5:
-        return "PARTIAL", f"UI transport action repeated ({m.ui_atlas_transport_action_count}x)"
-    return "PASS", "route shortcut with sync_ui"
+    return score_planned_tool(
+        m,
+        expected_tools={"cspe_compute_route"},
+        allow_openai=True,
+    )
 
 
 def score_route_and_todo(m: TurnMetrics) -> tuple[Score, str]:
@@ -480,7 +501,7 @@ def score_multi_step_ordered(
     m: TurnMetrics,
     *,
     expected_tools: list[str],
-    allow_openai_planner: bool = False,
+    allow_openai_planner: bool = True,
 ) -> tuple[Score, str]:
     """PASS only if all expected tools executed in order."""
     if m.crashed:

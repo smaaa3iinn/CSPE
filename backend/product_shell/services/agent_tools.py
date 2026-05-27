@@ -214,11 +214,31 @@ def create_graph3d_for_route(
     mode: GraphMode = "metro",
     use_lcc: bool = True,
     graph_viz_mode: Literal["stop", "station", "hybrid"] = "station",
+    sync_client_id: str | None = None,
 ) -> dict[str, Any]:
+    import json
+    import uuid
+
     route = route_payload.get("route") or route_payload
     if not route or not route.get("ok"):
         return {"ok": False, "error": "No successful route to visualize"}
-    session = te.create_graph3d_session(
+    client_id = (sync_client_id or uuid.uuid4().hex).strip()
+    fingerprint = json.dumps(
+        {
+            "mode": mode,
+            "use_lcc": use_lcc,
+            "graph_viz": graph_viz_mode,
+            "path_stop_ids": route.get("path") or [],
+            "path_station_ids": route.get("station_path") or [],
+            "selected_stop_id": None,
+            "selected_station_id": None,
+            "exploration_seq": 0,
+        },
+        sort_keys=True,
+    )
+    row = te.push_graph3d_sync(
+        client_id=client_id,
+        fingerprint=fingerprint,
         mode=mode,
         use_lcc=use_lcc,
         graph_viz_mode=graph_viz_mode,
@@ -227,10 +247,14 @@ def create_graph3d_for_route(
     )
     agent_store.record_event(
         "transport.graph3d.session",
-        {"session_id": session.get("session_id"), "metadata": session.get("metadata")},
+        {
+            "session_id": row.get("session_id"),
+            "sync_client_id": client_id,
+            "fingerprint": fingerprint,
+        },
         source="agent_tools",
     )
-    return {"ok": True, **session}
+    return {"ok": True, "sync_client_id": client_id, "fingerprint": fingerprint, **row}
 
 
 def shell_commands_for_route(route_payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -265,8 +289,57 @@ def shell_commands_for_route(route_payload: dict[str, Any]) -> list[dict[str, An
             meta_bits.append(f"{int(res['time_s'] // 60)} min")
         if res.get("transfers") is not None:
             meta_bits.append(f"{res['transfers']} transfers")
-        if meta_bits:
+        if route.get("path_summary"):
+            rv["route_meta"] = " · ".join(str(line) for line in route["path_summary"] if line)
+        elif meta_bits:
             rv["route_meta"] = ", ".join(meta_bits)
         if rv:
             cmds.append({"kind": "transport_route_view", **rv})
+    return cmds
+
+
+def shell_commands_for_exploration(exploration: dict[str, Any]) -> list[dict[str, Any]]:
+    """Sync Transport UI after area / nearby exploration (center + named results on map)."""
+    center = exploration.get("center") or {}
+    label = (
+        center.get("label")
+        or center.get("station_name")
+        or center.get("stop_name")
+        or exploration.get("query")
+        or ""
+    )
+    cmds: list[dict[str, Any]] = [{"kind": "set_mode", "mode": "transport"}]
+    spec: dict[str, Any] = {
+        "open_app_mode": "transport",
+        "run": "exploration_map",
+        "dock_tab": "search",
+        "stop_lookup_query": str(label).strip(),
+    }
+    if exploration.get("mode"):
+        spec["graph_mode"] = exploration["mode"]
+    if "use_lcc" in exploration:
+        spec["use_lcc"] = exploration["use_lcc"]
+    if center.get("station_id"):
+        spec["selected_station_id"] = center["station_id"]
+    if center.get("stop_id"):
+        spec["selected_stop_id"] = center["stop_id"]
+
+    counts = exploration.get("counts") or {}
+    stop_n = len(exploration.get("nearby_stops") or [])
+    poi_n = len(exploration.get("nearby_pois") or exploration.get("pois") or [])
+    spec["exploration_revision"] = (
+        f"{exploration.get('radius_m')}:{counts.get('stops', stop_n)}:"
+        f"{counts.get('pois', poi_n)}:{stop_n}:{poi_n}"
+    )
+
+    rv: dict[str, Any] = {
+        "center": center,
+        "radius_m": exploration.get("radius_m"),
+        "counts": counts,
+        "summary": exploration.get("summary"),
+        "nearby_stops": exploration.get("nearby_stops") or [],
+        "nearby_pois": exploration.get("nearby_pois") or exploration.get("pois") or [],
+    }
+    cmds.append({"kind": "transport_exploration_view", **rv})
+    cmds.append({"kind": "atlas_transport_action", "spec": spec})
     return cmds

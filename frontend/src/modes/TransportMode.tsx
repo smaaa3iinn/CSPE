@@ -1,24 +1,42 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getTransportStats,
-  postTransportGraph3DSession,
   postRoute,
   postShellClientLog,
+  postTransportExplorationOverlay,
   postTransportMap,
   searchStops,
   type TransportSearchMatch,
 } from "../api/client";
 import { postAgentEvent } from "../api/agentFeedback";
-import { getExternalApiBase, getGraphXRViewerBase } from "../api/config";
 import { useAppStore } from "../store";
 import { lineSuffix, resolveEndpointFromMatches } from "../transport/atlasTransportResolve";
 import {
   markTransportActionProcessed,
   wasTransportActionProcessed,
 } from "../transport/atlasTransportDedupe";
+import {
+  enableGraph3dLiveSync,
+  isGraph3dLiveSyncEnabled,
+  pushGraph3dViewSync,
+} from "../transport/graph3dSync";
+import { createMapRefreshScheduler, type MapRefreshOpts } from "../transport/mapRefreshScheduler";
+import type { ExplorationMapPayload } from "../transport/mapExplorationBridge";
+import {
+  postExplorationToMapIframe,
+  subscribeMapIframeMessages,
+} from "../transport/mapExplorationBridge";
 import type { AtlasTransportActionSpec } from "../transport/atlasTransportTypes";
 import { specKeysProvided } from "../transport/atlasTransportTypes";
+import {
+  buildTransportBaseMapBody,
+  buildTransportExplorationOverlayBody,
+  buildTransportMapBody,
+  readTransportViewContext,
+  transportViewFingerprint,
+} from "../transport/transportViewState";
 import "./transport.css";
+import { AtlasFocusBar } from "../components/AtlasFocusBar";
 
 const GRAPH_MODES = ["all", "metro", "rail", "tram", "bus", "other"] as const;
 
@@ -41,14 +59,32 @@ export function TransportMode() {
   const setStats = useAppStore((s) => s.setTransportStats);
   const routeErr = useAppStore((s) => s.transportRouteError);
   const routeMeta = useAppStore((s) => s.transportRouteMeta);
+  const routeLegs = useAppStore((s) => s.transportRouteLegs);
   const setRouteErr = useAppStore((s) => s.setTransportRouteError);
   const setRouteMeta = useAppStore((s) => s.setTransportRouteMeta);
+  const setRouteLegs = useAppStore((s) => s.setTransportRouteLegs);
   const setMode = useAppStore((s) => s.setMode);
+
+  const transportExplorationSeq = useAppStore((s) => s.transportExplorationSeq);
+  const mapChromeHidden = useAppStore((s) => s.transportMapChromeHidden);
+  const setTransportExploration = useAppStore((s) => s.setTransportExploration);
+  const mapSelectedStopId = useAppStore((s) => s.transportMapSelectionStopId);
+  const mapSelectedStationId = useAppStore((s) => s.transportMapSelectionStationId);
+  const setTransportMapSelection = useAppStore((s) => s.setTransportMapSelection);
 
   const [mapUrl, setMapUrl] = useState<string | null>(null);
   const [mapErr, setMapErr] = useState<string | null>(null);
   const [loadingMap, setLoadingMap] = useState(false);
   const prevUrl = useRef<string | null>(null);
+  const mapFetchSeq = useRef(0);
+  const explorationFetchSeq = useRef(0);
+  const mapIframeRef = useRef<HTMLIFrameElement>(null);
+  const mapBaseGeneration = useRef(0);
+  const mapReadyGeneration = useRef(-1);
+  const pendingExplorationRef = useRef<ExplorationMapPayload | null>(null);
+  const lastExplorationPayloadRef = useRef<ExplorationMapPayload | null>(null);
+  const pendingDeliveryTimersRef = useRef<number[]>([]);
+  const explorationFallbackTimerRef = useRef<number | null>(null);
   const prevGraphViz = useRef<string | null>(null);
 
   const [qStart, setQStart] = useState("");
@@ -62,11 +98,31 @@ export function TransportMode() {
   const [dockTab, setDockTab] = useState<"route" | "search">("route");
   const [stopLookupQ, setStopLookupQ] = useState("");
   const [stopLookupErr, setStopLookupErr] = useState<string | null>(null);
-  const [mapSelectedStopId, setMapSelectedStopId] = useState<string | null>(null);
-  const [mapSelectedStationId, setMapSelectedStationId] = useState<string | null>(null);
+  const mapSelectedStopIdRef = useRef<string | null>(null);
+  const mapSelectedStationIdRef = useRef<string | null>(null);
+  const loadingMapRef = useRef(false);
+  const mapUrlRef = useRef<string | null>(null);
+  mapSelectedStopIdRef.current = mapSelectedStopId;
+  mapSelectedStationIdRef.current = mapSelectedStationId;
+  loadingMapRef.current = loadingMap;
+  mapUrlRef.current = mapUrl;
+  const setMapSelection = useCallback(
+    (payload: { stopId?: string | null; stationId?: string | null }) => {
+      setTransportMapSelection(payload);
+      if (payload.stopId !== undefined) {
+        mapSelectedStopIdRef.current = payload.stopId;
+      }
+      if (payload.stationId !== undefined) {
+        mapSelectedStationIdRef.current = payload.stationId;
+      }
+    },
+    [setTransportMapSelection],
+  );
   const [graph3dErr, setGraph3dErr] = useState<string | null>(null);
   const [launchingGraph3d, setLaunchingGraph3d] = useState(false);
-  const graph3dSessionCache = useRef<Map<string, string>>(new Map());
+  const [graph3dViewerUrl, setGraph3dViewerUrl] = useState<string | null>(null);
+  const lastGraph3dSyncedFpRef = useRef<string | null>(null);
+  const graph3dSyncTimerRef = useRef<number | null>(null);
   /** Suppress route autocomplete while an Atlas `run: route` action is in flight. */
   const atlasRouteProcessingRef = useRef(false);
   const localUiRef = useRef({
@@ -82,66 +138,391 @@ export function TransportMode() {
 
   const atlasTransportAction = useAppStore((s) => s.atlasTransportAction);
   const setAtlasTransportAction = useAppStore((s) => s.setAtlasTransportAction);
+  const transportMapFocus = useAppStore((s) => s.transportMapFocus);
 
   const autocompleteQ = dockTab === "search" ? stopLookupQ : searchQ;
 
-  const refreshMap = useCallback(
-    async (opts?: { selectedStopId?: string | null; selectedStationId?: string | null }) => {
+  const deliverExplorationPayload = useCallback((payload: ExplorationMapPayload | null) => {
+    if (payload) {
+      lastExplorationPayloadRef.current = payload;
+      pendingExplorationRef.current = payload;
+    } else {
+      lastExplorationPayloadRef.current = null;
+      pendingExplorationRef.current = null;
+    }
+    return postExplorationToMapIframe(mapIframeRef.current, payload);
+  }, []);
+
+  const clearPendingDeliveryTimers = useCallback(() => {
+    for (const id of pendingDeliveryTimersRef.current) {
+      window.clearTimeout(id);
+    }
+    pendingDeliveryTimersRef.current = [];
+  }, []);
+
+  const clearExplorationFallbackWatchdog = useCallback(() => {
+    if (explorationFallbackTimerRef.current !== null) {
+      window.clearTimeout(explorationFallbackTimerRef.current);
+      explorationFallbackTimerRef.current = null;
+    }
+  }, []);
+
+  const tryDeliverPendingExploration = useCallback((reason: string): boolean => {
+    const pending =
+      pendingExplorationRef.current ?? lastExplorationPayloadRef.current;
+    if (!pending) return false;
+    const posted = postExplorationToMapIframe(mapIframeRef.current, pending);
+    if (posted) {
+      const exp = useAppStore.getState().transportExploration;
+      void postShellClientLog("exploration_map_refresh", {
+        phase: "overlay_deliver",
+        reason,
+        stop_count: exp?.nearby_stops?.length ?? 0,
+        poi_count: exp?.nearby_pois?.length ?? 0,
+        radius_m: exp?.radius_m ?? null,
+        map_base_gen: mapBaseGeneration.current,
+        map_ready_gen: mapReadyGeneration.current,
+      });
+    }
+    return posted;
+  }, []);
+
+  const schedulePendingExplorationDelivery = useCallback(
+    (fetchId?: number) => {
+      clearPendingDeliveryTimers();
+      for (const ms of [0, 100, 300, 800, 2000, 5000]) {
+        const timerId = window.setTimeout(() => {
+          if (fetchId !== undefined && fetchId !== explorationFetchSeq.current) {
+            return;
+          }
+          tryDeliverPendingExploration(`retry_${ms}ms`);
+        }, ms);
+        pendingDeliveryTimersRef.current.push(timerId);
+      }
+    },
+    [clearPendingDeliveryTimers, tryDeliverPendingExploration],
+  );
+
+  const scheduleBaseMapRefreshRef = useRef<(opts?: MapRefreshOpts) => void>(() => {});
+  const scheduleExplorationFallbackWatchdogRef = useRef<(fetchId: number) => void>(() => {});
+  const executeExplorationMapRefreshRef = useRef<
+    (opts?: MapRefreshOpts) => Promise<void>
+  >(async () => {});
+
+  const executeBaseMapRefresh = useCallback(async (opts?: MapRefreshOpts) => {
+      const fetchId = ++mapFetchSeq.current;
       const selStop =
-        opts && "selectedStopId" in opts ? opts.selectedStopId ?? null : mapSelectedStopId;
+        opts && "selectedStopId" in opts ? opts.selectedStopId ?? null : mapSelectedStopIdRef.current;
       const selStation =
-        opts && "selectedStationId" in opts ? opts.selectedStationId ?? null : mapSelectedStationId;
+        opts && "selectedStationId" in opts
+          ? opts.selectedStationId ?? null
+          : mapSelectedStationIdRef.current;
       setLoadingMap(true);
       setMapErr(null);
       try {
-        const mapBody: Record<string, unknown> = {
-          mode: graphMode,
-          use_lcc: useLcc,
-          viz_mode: viz,
-          graph_viz_mode: graphViz,
-          path_stop_ids: pathIds,
-          show_transfers: showTransfers,
-        };
-        if (
-          (graphViz === "station" || graphViz === "hybrid") &&
-          pathStationIds &&
-          pathStationIds.length > 0
-        ) {
-          mapBody.path_station_ids = pathStationIds;
-        }
-        if (selStation && graphViz !== "stop") {
-          mapBody.selected_station_id = selStation;
-        } else if (selStop) {
-          mapBody.selected_stop_id = selStop;
-        }
+        const ctx = readTransportViewContext();
+        const mapBody = buildTransportBaseMapBody(ctx, {
+          selectedStopId: selStop,
+          selectedStationId: selStation,
+        });
         const { html } = await postTransportMap(mapBody);
+        if (fetchId !== mapFetchSeq.current) {
+          return;
+        }
+        if (!html || html.trim().length < 32) {
+          throw new Error("Map response was empty");
+        }
+        mapBaseGeneration.current += 1;
+        mapReadyGeneration.current = -1;
         const blob = new Blob([html], { type: "text/html;charset=utf-8" });
         const url = URL.createObjectURL(blob);
-        if (prevUrl.current) URL.revokeObjectURL(prevUrl.current);
+        const prior = prevUrl.current;
         prevUrl.current = url;
         setMapUrl(url);
+        if (prior) {
+          window.setTimeout(() => URL.revokeObjectURL(prior), 4000);
+        }
       } catch (e) {
+        if (fetchId !== mapFetchSeq.current) return;
         setMapErr(e instanceof Error ? e.message : "Map failed");
       } finally {
+        if (fetchId === mapFetchSeq.current) {
+          setLoadingMap(false);
+        }
+      }
+    }, []);
+
+  /** Full map HTML with exploration layers baked in (reliable; used when patch delivery fails). */
+  const executeExplorationMapRefresh = useCallback(async (opts?: MapRefreshOpts) => {
+    const fetchId = ++mapFetchSeq.current;
+    const selStop =
+      opts && "selectedStopId" in opts ? opts.selectedStopId ?? null : mapSelectedStopIdRef.current;
+    const selStation =
+      opts && "selectedStationId" in opts
+        ? opts.selectedStationId ?? null
+        : mapSelectedStationIdRef.current;
+    setLoadingMap(true);
+    setMapErr(null);
+    try {
+      const ctx = readTransportViewContext();
+      const mapBody = buildTransportMapBody(ctx, {
+        selectedStopId: selStop,
+        selectedStationId: selStation,
+      });
+      const hasOverlay = Boolean(mapBody.exploration_overlay);
+      const { html } = await postTransportMap(mapBody);
+      if (fetchId !== mapFetchSeq.current) {
+        if (hasOverlay) {
+          void postShellClientLog("exploration_map_refresh", {
+            phase: "stale",
+            fetch_id: fetchId,
+            current_id: mapFetchSeq.current,
+          });
+        }
+        return;
+      }
+      if (!html || html.trim().length < 32) {
+        throw new Error("Map response was empty");
+      }
+      mapBaseGeneration.current += 1;
+      mapReadyGeneration.current = -1;
+      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const prior = prevUrl.current;
+      prevUrl.current = url;
+      setMapUrl(url);
+      if (prior) {
+        window.setTimeout(() => URL.revokeObjectURL(prior), 4000);
+      }
+      if (hasOverlay) {
+        pendingExplorationRef.current = null;
+        clearExplorationFallbackWatchdog();
+        clearPendingDeliveryTimers();
+        const exp = useAppStore.getState().transportExploration;
+        void postShellClientLog("exploration_map_refresh", {
+          phase: "full_reload_done",
+          fetch_id: fetchId,
+          html_bytes: html.length,
+          stop_count: exp?.nearby_stops?.length ?? 0,
+          poi_count: exp?.nearby_pois?.length ?? 0,
+          radius_m: exp?.radius_m ?? null,
+          stale: false,
+        });
+      }
+    } catch (e) {
+      if (fetchId !== mapFetchSeq.current) return;
+      const errMsg = e instanceof Error ? e.message : "Map failed";
+      void postShellClientLog("exploration_map_refresh", {
+        phase: "error",
+        fetch_id: fetchId,
+        error: errMsg,
+      });
+      setMapErr(errMsg);
+    } finally {
+      if (fetchId === mapFetchSeq.current) {
         setLoadingMap(false);
       }
-    },
-    [
-      graphMode,
-      useLcc,
-      viz,
-      graphViz,
-      pathIds,
-      pathStationIds,
-      showTransfers,
-      mapSelectedStopId,
-      mapSelectedStationId,
-    ]
+    }
+  }, []);
+
+  const applyExplorationOverlay = useCallback(async () => {
+    const fetchId = ++explorationFetchSeq.current;
+    const overlayBody = buildTransportExplorationOverlayBody();
+    if (!overlayBody) {
+      clearExplorationFallbackWatchdog();
+      clearPendingDeliveryTimers();
+      deliverExplorationPayload(null);
+      return;
+    }
+
+    try {
+      const payload = await postTransportExplorationOverlay({
+        exploration_overlay: overlayBody,
+      });
+      if (fetchId !== explorationFetchSeq.current) {
+        return;
+      }
+
+      const posted = deliverExplorationPayload(payload);
+      schedulePendingExplorationDelivery(fetchId);
+
+      const hasIframe = Boolean(mapIframeRef.current?.contentWindow);
+      const genReady =
+        mapReadyGeneration.current === mapBaseGeneration.current && hasIframe;
+
+      if (!hasIframe && !loadingMapRef.current) {
+        scheduleBaseMapRefreshRef.current();
+      }
+
+      void postShellClientLog("exploration_map_refresh", {
+        phase: posted && genReady ? "overlay_done" : "overlay_queued",
+        fetch_id: fetchId,
+        reason: posted && genReady ? "immediate" : "await_map",
+        map_base_gen: mapBaseGeneration.current,
+        map_ready_gen: mapReadyGeneration.current,
+        base_in_flight: loadingMapRef.current || Boolean(mapUrlRef.current),
+        stop_count: overlayBody.nearby_stops
+          ? (overlayBody.nearby_stops as unknown[]).length
+          : 0,
+        poi_count: overlayBody.nearby_pois ? (overlayBody.nearby_pois as unknown[]).length : 0,
+      });
+
+      if (!posted || !genReady) {
+        scheduleExplorationFallbackWatchdogRef.current(fetchId);
+      }
+    } catch {
+      void postShellClientLog("exploration_map_refresh", {
+        phase: "fallback_full_reload",
+        fetch_id: fetchId,
+        reason: "overlay_fetch_failed",
+        map_base_gen: mapBaseGeneration.current,
+      });
+      await executeExplorationMapRefreshRef.current();
+    }
+  }, [
+    clearExplorationFallbackWatchdog,
+    clearPendingDeliveryTimers,
+    deliverExplorationPayload,
+    schedulePendingExplorationDelivery,
+  ]);
+
+  const executeBaseMapRefreshRef = useRef(executeBaseMapRefresh);
+  executeBaseMapRefreshRef.current = executeBaseMapRefresh;
+  executeExplorationMapRefreshRef.current = executeExplorationMapRefresh;
+  const applyExplorationOverlayRef = useRef(applyExplorationOverlay);
+  applyExplorationOverlayRef.current = applyExplorationOverlay;
+
+  const mapSchedulerRef = useRef(
+    createMapRefreshScheduler((opts) => executeBaseMapRefreshRef.current(opts)),
+  );
+  const explorationSchedulerRef = useRef(
+    createMapRefreshScheduler(() => applyExplorationOverlayRef.current()),
   );
 
+  const scheduleBaseMapRefresh = useCallback((opts?: MapRefreshOpts) => {
+    mapSchedulerRef.current.schedule(opts);
+  }, []);
+  scheduleBaseMapRefreshRef.current = scheduleBaseMapRefresh;
+
+  const scheduleExplorationFallbackWatchdog = useCallback(
+    (fetchId: number) => {
+      clearExplorationFallbackWatchdog();
+      explorationFallbackTimerRef.current = window.setTimeout(() => {
+        if (fetchId !== explorationFetchSeq.current) {
+          return;
+        }
+        if (!pendingExplorationRef.current && !lastExplorationPayloadRef.current) {
+          return;
+        }
+        void postShellClientLog("exploration_map_refresh", {
+          phase: "fallback_full_reload",
+          fetch_id: fetchId,
+          reason: "delivery_watchdog",
+          map_base_gen: mapBaseGeneration.current,
+          map_ready_gen: mapReadyGeneration.current,
+        });
+        void executeExplorationMapRefreshRef.current();
+      }, 12000);
+    },
+    [clearExplorationFallbackWatchdog],
+  );
+  scheduleExplorationFallbackWatchdogRef.current = scheduleExplorationFallbackWatchdog;
+
+  const scheduleExplorationOverlay = useCallback(() => {
+    explorationSchedulerRef.current.schedule();
+  }, []);
+
+  /** Full base map reload (network, route, selection). */
+  const scheduleMapRefresh = scheduleBaseMapRefresh;
+
   useEffect(() => {
-    void refreshMap();
-  }, [refreshMap]);
+    return subscribeMapIframeMessages((msg) => {
+      if (msg.type === "cspe-map-exploration-applied") {
+        pendingExplorationRef.current = null;
+        clearExplorationFallbackWatchdog();
+        clearPendingDeliveryTimers();
+        return;
+      }
+      if (msg.type !== "cspe-map-ready") return;
+      mapReadyGeneration.current = mapBaseGeneration.current;
+      tryDeliverPendingExploration("map_ready");
+      schedulePendingExplorationDelivery();
+    });
+  }, [
+    clearExplorationFallbackWatchdog,
+    clearPendingDeliveryTimers,
+    schedulePendingExplorationDelivery,
+    tryDeliverPendingExploration,
+  ]);
+
+  useEffect(() => {
+    if (!mapUrl) return;
+    schedulePendingExplorationDelivery();
+  }, [mapUrl, schedulePendingExplorationDelivery]);
+
+  useEffect(() => {
+    if (viz === "network_3d") return;
+    scheduleBaseMapRefresh();
+  }, [
+    graphMode,
+    useLcc,
+    viz,
+    graphViz,
+    pathIds,
+    pathStationIds,
+    showTransfers,
+    mapSelectedStopId,
+    mapSelectedStationId,
+    scheduleBaseMapRefresh,
+  ]);
+
+  const loadGraph3dViewer = useCallback(async (forceReload = false) => {
+    setGraph3dErr(null);
+    setLaunchingGraph3d(true);
+    try {
+      enableGraph3dLiveSync();
+      const { viewerUrl, fingerprint } = await pushGraph3dViewSync();
+      lastGraph3dSyncedFpRef.current = fingerprint;
+      setGraph3dViewerUrl((prev) => (forceReload || !prev ? viewerUrl : prev));
+    } catch (e) {
+      setGraph3dErr(e instanceof Error ? e.message : "Unable to load 3D/VR graph.");
+    } finally {
+      setLaunchingGraph3d(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (viz !== "network_3d") return;
+    void loadGraph3dViewer();
+  }, [viz, loadGraph3dViewer]);
+
+  const lastExplorationMapSeq = useRef(0);
+  useEffect(() => {
+    if (transportExplorationSeq < 1) return;
+    if (transportExplorationSeq === lastExplorationMapSeq.current) return;
+    lastExplorationMapSeq.current = transportExplorationSeq;
+    scheduleExplorationOverlay();
+  }, [transportExplorationSeq, scheduleExplorationOverlay]);
+
+  const lastMapFocusSeq = useRef(0);
+  useEffect(() => {
+    if (!transportMapFocus || transportMapFocus.seq === lastMapFocusSeq.current) return;
+    lastMapFocusSeq.current = transportMapFocus.seq;
+    const { stationId, stopId, label } = transportMapFocus;
+    const stationFirstNow = useAppStore.getState().transportGraphViz === "station";
+    setDockTab("search");
+    setStopLookupErr(null);
+    if (label) setStopLookupQ(label);
+    if (stationFirstNow && stationId) {
+      setMapSelection({ stationId, stopId: null });
+      scheduleMapRefresh({ selectedStationId: stationId, selectedStopId: null });
+    } else if (stopId) {
+      setMapSelection({ stopId, stationId: null });
+      scheduleMapRefresh({ selectedStopId: stopId, selectedStationId: null });
+    } else {
+      scheduleMapRefresh();
+    }
+  }, [transportMapFocus, scheduleMapRefresh]);
 
   useEffect(() => {
     if (prevGraphViz.current === null) {
@@ -152,17 +533,58 @@ export function TransportMode() {
       return;
     }
     prevGraphViz.current = graphViz;
-    setPathIds(null);
-    setStartId(null);
-    setEndId(null);
-    setQStart("");
-    setQEnd("");
-    setRouteErr(null);
-    setRouteMeta(null);
-    setMapSelectedStopId(null);
-    setMapSelectedStationId(null);
-    setStopLookupQ("");
-  }, [graphViz, setPathIds, setStationPathIds, setRouteErr, setRouteMeta]);
+    if (viz !== "network_3d") {
+      scheduleMapRefresh();
+    }
+  }, [graphViz, scheduleMapRefresh, viz]);
+
+  const lastViewFingerprint = useRef<string | null>(null);
+  useEffect(() => {
+    if (viz !== "network_3d") return;
+    const fp = transportViewFingerprint(readTransportViewContext());
+    if (lastViewFingerprint.current === fp) {
+      return;
+    }
+    lastViewFingerprint.current = fp;
+
+    if (!isGraph3dLiveSyncEnabled()) {
+      return;
+    }
+    if (lastGraph3dSyncedFpRef.current === fp) {
+      return;
+    }
+
+    if (graph3dSyncTimerRef.current) {
+      window.clearTimeout(graph3dSyncTimerRef.current);
+    }
+    graph3dSyncTimerRef.current = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const { fingerprint } = await pushGraph3dViewSync();
+          lastGraph3dSyncedFpRef.current = fingerprint;
+        } catch {
+          /* embedded viewer polls sync and reloads session internally */
+        }
+      })();
+    }, 400);
+
+    return () => {
+      if (graph3dSyncTimerRef.current) {
+        window.clearTimeout(graph3dSyncTimerRef.current);
+      }
+    };
+  }, [
+    viz,
+    graphMode,
+    useLcc,
+    graphViz,
+    pathIds,
+    pathStationIds,
+    showTransfers,
+    mapSelectedStopId,
+    mapSelectedStationId,
+    transportExplorationSeq,
+  ]);
 
   useEffect(() => {
     void (async () => {
@@ -197,6 +619,11 @@ export function TransportMode() {
 
   type RouteResult = Awaited<ReturnType<typeof postRoute>>;
 
+  const scheduleMapRefreshRef = useRef(scheduleMapRefresh);
+  scheduleMapRefreshRef.current = scheduleMapRefresh;
+  const scheduleExplorationOverlayRef = useRef(scheduleExplorationOverlay);
+  scheduleExplorationOverlayRef.current = scheduleExplorationOverlay;
+
   const applyRouteResult = useCallback(
     (r: RouteResult) => {
       if (r.ok && r.path) {
@@ -204,10 +631,8 @@ export function TransportMode() {
         setStationPathIds(
           r.station_path && r.station_path.length > 0 ? r.station_path : null
         );
+        setRouteLegs(r.path_legs && r.path_legs.length > 0 ? r.path_legs : null);
         const parts: string[] = [];
-        if (r.routing_scope === "station" && r.station_names && r.station_names.length > 0) {
-          parts.push(r.station_names.join(" → "));
-        }
         if (r.result?.distance_m != null) {
           parts.push(
             r.result.distance_m >= 1000
@@ -217,32 +642,24 @@ export function TransportMode() {
         }
         if (r.result?.time_s != null) parts.push(`Time: ${(r.result.time_s / 60).toFixed(1)} min`);
         if (r.result?.transfers != null) parts.push(`Transfers: ${r.result.transfers}`);
-        if (
-          r.routing_scope !== "station" &&
-          r.station_path &&
-          r.station_path.length > 0 &&
-          (!r.station_names || r.station_names.length === 0)
-        ) {
-          parts.push(`Stations: ${r.station_path.length}`);
-        }
-        setRouteMeta(parts.join(" · "));
+        setRouteMeta(parts.length > 0 ? parts.join(" · ") : null);
       } else {
         setPathIds(null);
         setStationPathIds(null);
+        setRouteLegs(null);
         setRouteErr(r.error?.message ?? "Route failed");
       }
     },
-    [setPathIds, setStationPathIds, setRouteErr, setRouteMeta]
+    [setPathIds, setStationPathIds, setRouteErr, setRouteMeta, setRouteLegs]
   );
 
   const applyRouteResultRef = useRef(applyRouteResult);
   applyRouteResultRef.current = applyRouteResult;
-  const refreshMapRef = useRef(refreshMap);
-  refreshMapRef.current = refreshMap;
 
   async function computeRoute() {
     setRouteErr(null);
     setRouteMeta(null);
+    setRouteLegs(null);
     if (!startId || !endId) {
       setRouteErr(stationFirst ? "Pick start and end stations." : "Pick start and end stops.");
       return;
@@ -271,46 +688,6 @@ export function TransportMode() {
     setRouteErr(null);
     setRouteMeta(null);
     setGraph3dErr(null);
-  }
-
-  async function openGraph3DViewer() {
-    setGraph3dErr(null);
-    setLaunchingGraph3d(true);
-    try {
-      const cacheKey = JSON.stringify({
-        mode: graphMode,
-        use_lcc: useLcc,
-        graph_viz_mode: graphViz,
-        path_stop_ids: pathIds ?? [],
-        path_station_ids: pathStationIds ?? [],
-      });
-      const cachedUrl = graph3dSessionCache.current.get(cacheKey);
-      if (cachedUrl) {
-        window.open(cachedUrl, "cspe-graphxr", "noopener,noreferrer,width=1280,height=860");
-        return;
-      }
-      const session = await postTransportGraph3DSession({
-        mode: graphMode,
-        use_lcc: useLcc,
-        graph_viz_mode: graphViz,
-        path_stop_ids: pathIds ?? [],
-        path_station_ids: pathStationIds ?? [],
-      });
-      const viewer = new URL(getGraphXRViewerBase());
-      viewer.searchParams.set("session", session.session_id);
-      viewer.searchParams.set("api", getExternalApiBase());
-      const nextUrl = viewer.toString();
-      graph3dSessionCache.current.set(cacheKey, nextUrl);
-      if (graph3dSessionCache.current.size > 12) {
-        const firstKey = graph3dSessionCache.current.keys().next().value;
-        if (firstKey) graph3dSessionCache.current.delete(firstKey);
-      }
-      window.open(nextUrl, "cspe-graphxr", "noopener,noreferrer,width=1280,height=860");
-    } catch (e) {
-      setGraph3dErr(e instanceof Error ? e.message : "Unable to open 3D/VR graph.");
-    } finally {
-      setLaunchingGraph3d(false);
-    }
   }
 
   function applyAtlasTransportPatches(spec: AtlasTransportActionSpec) {
@@ -406,18 +783,62 @@ export function TransportMode() {
       };
     }
     if (run === "refresh_map") {
-      void refreshMapRef.current();
+      void scheduleMapRefreshRef.current();
       void postShellClientLog("atlas_transport_trigger", { seq: mySeq, trigger: "refresh_map" });
       return;
     }
     if (run === "clear_map_highlight") {
       setStopLookupErr(null);
-      setMapSelectedStopId(null);
-      setMapSelectedStationId(null);
+      setMapSelection({ stopId: null, stationId: null });
       setStopLookupQ("");
-      void refreshMapRef.current({ selectedStopId: null, selectedStationId: null });
+      void scheduleMapRefreshRef.current({ selectedStopId: null, selectedStationId: null });
       void postShellClientLog("atlas_transport_trigger", { seq: mySeq, trigger: "clear_map_highlight" });
       return;
+    }
+
+    if (run === "exploration_map") {
+      void (async () => {
+        const st = useAppStore.getState();
+        if (st.mode !== "transport") {
+          st.setMode("transport");
+        }
+        const exp = st.transportExploration;
+        const center = exp?.center;
+        const label =
+          (typeof spec.stop_lookup_query === "string" && spec.stop_lookup_query.trim()) ||
+          String(
+            center?.label ?? center?.station_name ?? center?.stop_name ?? "",
+          ).trim();
+        setDockTab("search");
+        setStopLookupErr(null);
+        if (label) setStopLookupQ(label);
+        const stationId =
+          (typeof spec.selected_station_id === "string" && spec.selected_station_id) ||
+          (typeof center?.station_id === "string" ? center.station_id : null);
+        const stopId =
+          (typeof spec.selected_stop_id === "string" && spec.selected_stop_id) ||
+          (typeof center?.stop_id === "string" ? center.stop_id : null);
+        void postShellClientLog("exploration_map_trigger", {
+          trigger: "exploration_map",
+          seq: mySeq,
+          stops: exp?.nearby_stops?.length ?? 0,
+          pois: exp?.nearby_pois?.length ?? 0,
+          selected_station_id: stationId,
+          selected_stop_id: stopId,
+          radius_m: exp?.radius_m ?? null,
+          has_exploration: Boolean(exp),
+        });
+        void postShellClientLog("atlas_transport_trigger", {
+          seq: mySeq,
+          trigger: "exploration_map",
+          ok: true,
+          stops: exp?.nearby_stops?.length ?? 0,
+          pois: exp?.nearby_pois?.length ?? 0,
+        });
+      })();
+      return () => {
+        cancelled = true;
+      };
     }
 
     if (run === "search_map") {
@@ -438,9 +859,8 @@ export function TransportMode() {
           const first = r.matches[0];
           if (!first) {
             setStopLookupErr(sf ? "No station found for that query." : "No stop found for that query.");
-            setMapSelectedStopId(null);
-            setMapSelectedStationId(null);
-            void refreshMapRef.current({ selectedStopId: null, selectedStationId: null });
+            setMapSelection({ stopId: null, stationId: null });
+            void scheduleMapRefreshRef.current({ selectedStopId: null, selectedStationId: null });
             void postShellClientLog("atlas_transport_trigger", {
               seq: mySeq,
               trigger: "search_map",
@@ -450,18 +870,16 @@ export function TransportMode() {
             return;
           }
           if (sf && first.station_id) {
-            setMapSelectedStationId(first.station_id);
-            setMapSelectedStopId(null);
+            setMapSelection({ stationId: first.station_id, stopId: null });
             const label = `${first.station_name ?? first.stop_name ?? ""}${lineSuffix(first.line)}`.trim();
             setStopLookupQ(label);
             setSuggestions([]);
-            void refreshMapRef.current({ selectedStationId: first.station_id, selectedStopId: null });
+            void scheduleMapRefreshRef.current({ selectedStationId: first.station_id, selectedStopId: null });
           } else if (first.stop_id) {
-            setMapSelectedStopId(first.stop_id);
-            setMapSelectedStationId(null);
+            setMapSelection({ stopId: first.stop_id, stationId: null });
             setStopLookupQ(`${first.stop_name ?? first.stop_id} | ${first.stop_id}`);
             setSuggestions([]);
-            void refreshMapRef.current({ selectedStopId: first.stop_id, selectedStationId: null });
+            void scheduleMapRefreshRef.current({ selectedStopId: first.stop_id, selectedStationId: null });
           } else {
             setStopLookupErr("No resolvable stop or station for that query.");
           }
@@ -651,24 +1069,21 @@ export function TransportMode() {
       const first = r.matches[0];
       if (!first) {
         setStopLookupErr(stationFirst ? "No station found for that query." : "No stop found for that query.");
-        setMapSelectedStopId(null);
-        setMapSelectedStationId(null);
-        void refreshMap({ selectedStopId: null, selectedStationId: null });
+        setMapSelection({ stopId: null, stationId: null });
+        void scheduleMapRefresh({ selectedStopId: null, selectedStationId: null });
         return;
       }
       if (stationFirst && first.station_id) {
-        setMapSelectedStationId(first.station_id);
-        setMapSelectedStopId(null);
+        setMapSelection({ stationId: first.station_id, stopId: null });
         const label = `${first.station_name ?? first.stop_name ?? ""}${lineSuffix(first.line)}`.trim();
         setStopLookupQ(label);
         setSuggestions([]);
-        void refreshMap({ selectedStationId: first.station_id, selectedStopId: null });
+        void scheduleMapRefresh({ selectedStationId: first.station_id, selectedStopId: null });
       } else if (first.stop_id) {
-        setMapSelectedStopId(first.stop_id);
-        setMapSelectedStationId(null);
+        setMapSelection({ stopId: first.stop_id, stationId: null });
         setStopLookupQ(`${first.stop_name ?? first.stop_id} | ${first.stop_id}`);
         setSuggestions([]);
-        void refreshMap({ selectedStopId: first.stop_id, selectedStationId: null });
+        void scheduleMapRefresh({ selectedStopId: first.stop_id, selectedStationId: null });
       } else {
         setStopLookupErr("No resolvable stop or station for that query.");
       }
@@ -679,23 +1094,58 @@ export function TransportMode() {
 
   function clearMapStopHighlight() {
     setStopLookupErr(null);
-    setMapSelectedStopId(null);
-    setMapSelectedStationId(null);
+    setMapSelection({ stopId: null, stationId: null });
     setStopLookupQ("");
-    void refreshMap({ selectedStopId: null, selectedStationId: null });
+    setTransportExploration(null);
+    void scheduleMapRefresh({ selectedStopId: null, selectedStationId: null });
   }
 
   return (
-    <div className="transport-root">
+    <div
+      className={`transport-root${mapChromeHidden ? " transport-root--chrome-hidden" : ""}`}
+    >
       <div className="transport-map-wrap">
-        {loadingMap && <div className="transport-map-loading">Loading map…</div>}
-        {mapErr && (
-          <div className="transport-map-err">
-            <strong>Map</strong>
-            <p style={{ margin: "8px 0 0" }}>{mapErr}</p>
-          </div>
+        {viz === "network_3d" ? (
+          <>
+            {launchingGraph3d && !graph3dViewerUrl && (
+              <div className="transport-map-loading">Loading 3D graph…</div>
+            )}
+            {graph3dErr && !graph3dViewerUrl && (
+              <div className="transport-map-err">
+                <strong>3D/VR graph</strong>
+                <p style={{ margin: "8px 0 0" }}>{graph3dErr}</p>
+              </div>
+            )}
+            {graph3dViewerUrl && (
+              <iframe
+                title="Transport 3D/VR graph"
+                className="transport-graph3d-iframe"
+                src={graph3dViewerUrl}
+                allow="xr-spatial-tracking; fullscreen"
+              />
+            )}
+          </>
+        ) : (
+          <>
+            {loadingMap && <div className="transport-map-loading">Loading map…</div>}
+            {mapErr && (
+              <div className="transport-map-err">
+                <strong>Map</strong>
+                <p style={{ margin: "8px 0 0" }}>{mapErr}</p>
+              </div>
+            )}
+            {mapUrl && (
+              <iframe
+                ref={mapIframeRef}
+                title="Transport map"
+                src={mapUrl}
+                onLoad={() => {
+                  schedulePendingExplorationDelivery();
+                }}
+              />
+            )}
+          </>
         )}
-        {mapUrl && <iframe title="Transport map" src={mapUrl} />}
       </div>
 
       <div className="transport-left-stack">
@@ -714,23 +1164,10 @@ export function TransportMode() {
               className={`transport-btn-viz${viz === "network_3d" ? " active" : ""}`}
               onClick={() => setViz("network_3d")}
             >
-              3D network
-            </button>
-            <button
-              type="button"
-              className="transport-btn-viz"
-              onClick={() => void openGraph3DViewer()}
-              disabled={launchingGraph3d}
-              title={
-                pathIds && pathIds.length > 0
-                  ? "Open the full graph in GraphXR with this route highlighted"
-                  : "Open the full graph in GraphXR"
-              }
-            >
-              {launchingGraph3d ? "Opening..." : "3D/VR graph"}
+              3D/VR graph
             </button>
           </div>
-          {graph3dErr && <div className="transport-route-err">{graph3dErr}</div>}
+          {graph3dErr && viz === "network_3d" && <div className="transport-route-err">{graph3dErr}</div>}
 
           <div className="transport-section-label">Graph layer</div>
           <div className="transport-pill-row">
@@ -774,34 +1211,12 @@ export function TransportMode() {
             ))}
           </div>
 
-          <button type="button" className="transport-btn-refresh" onClick={() => void refreshMap()}>
+          <button type="button" className="transport-btn-refresh" onClick={() => void scheduleMapRefresh()}>
             Refresh map
           </button>
         </div>
 
         <div className="transport-float transport-float--stack-panel transport-float--stack-panel--scroll">
-          <div className="transport-section-label" style={{ marginTop: 0 }}>
-            Graph
-          </div>
-          <div className="transport-graph-toggles">
-            <button
-              type="button"
-              className={`transport-toggle-btn${useLcc ? " transport-toggle-btn--on" : ""}`}
-              aria-pressed={useLcc}
-              onClick={() => setUseLcc(!useLcc)}
-            >
-              Largest connected component
-            </button>
-            <button
-              type="button"
-              className={`transport-toggle-btn${showTransfers ? " transport-toggle-btn--on" : ""}`}
-              aria-pressed={showTransfers}
-              onClick={() => setShowTransfers(!showTransfers)}
-            >
-              Show transfer edges
-            </button>
-          </div>
-
           <section className="transport-network-stats" aria-label="Network statistics">
             <div className="transport-section-label">Network stats</div>
             {stats ? (
@@ -840,6 +1255,19 @@ export function TransportMode() {
               )}
             </div>
           )}
+          {routeLegs && routeLegs.length > 0 && (
+            <div className="transport-route-legs" aria-label="Route breakdown">
+              {routeLegs.map((leg, index) => (
+                <div
+                  key={`${leg.kind}-${index}-${leg.summary}`}
+                  className={`transport-route-leg${leg.kind === "transfer" ? " transport-route-leg--transfer" : ""}`}
+                  style={{ borderLeftColor: leg.color }}
+                >
+                  <div className="transport-route-leg__summary">{leg.summary}</div>
+                </div>
+              ))}
+            </div>
+          )}
           {routeMeta && <div className="transport-route-meta">{routeMeta}</div>}
           {routeErr && <div className="transport-route-err">{routeErr}</div>}
         </div>
@@ -855,21 +1283,19 @@ export function TransportMode() {
               onClick={() => {
                 if (dockTab === "search") {
                   if (stationFirst && s.station_id) {
-                    setMapSelectedStationId(s.station_id);
-                    setMapSelectedStopId(null);
+                    setMapSelection({ stationId: s.station_id, stopId: null });
                     setStopLookupQ(
                       `${s.station_name ?? s.stop_name ?? ""}${lineSuffix(s.line)}`.trim()
                     );
                     setStopLookupErr(null);
                     setSuggestions([]);
-                    void refreshMap({ selectedStationId: s.station_id, selectedStopId: null });
+                    void scheduleMapRefresh({ selectedStationId: s.station_id, selectedStopId: null });
                   } else if (s.stop_id) {
-                    setMapSelectedStopId(s.stop_id);
-                    setMapSelectedStationId(null);
+                    setMapSelection({ stopId: s.stop_id, stationId: null });
                     setStopLookupQ(`${s.stop_name ?? s.stop_id} | ${s.stop_id}`);
                     setStopLookupErr(null);
                     setSuggestions([]);
-                    void refreshMap({ selectedStopId: s.stop_id, selectedStationId: null });
+                    void scheduleMapRefresh({ selectedStopId: s.stop_id, selectedStationId: null });
                   }
                 } else if (stationFirst && s.station_id) {
                   if (routeFocus === "start") {
@@ -993,6 +1419,8 @@ export function TransportMode() {
           </button>
         </div>
       </div>
+
+      {mapChromeHidden && <AtlasFocusBar />}
     </div>
   );
 }

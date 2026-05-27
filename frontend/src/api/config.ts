@@ -12,7 +12,7 @@ export function getApiBase(): string {
   return String(raw).replace(/\/$/, "");
 }
 
-/** Absolute API base for external windows that cannot use this Vite app's relative `/api` proxy. */
+/** Absolute API base for embedded GraphXR iframe (cross-origin session fetch). */
 export function getExternalApiBase(): string {
   const direct = getApiBase();
   if (direct) return direct;

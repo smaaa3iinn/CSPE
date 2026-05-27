@@ -47,6 +47,8 @@ RENDER_GRAPH_PATHS = {
 }
 GRAPH3D_SESSION_TTL_S = 30 * 60
 _GRAPH3D_SESSIONS: dict[str, tuple[float, dict[str, Any]]] = {}
+_GRAPH3D_SYNC: dict[str, tuple[float, str, str]] = {}
+GRAPH3D_SYNC_TTL_S = 3600
 _MAP_HTML_CACHE_MAX = 24
 _MAP_HTML_CACHE: OrderedDict[tuple[Any, ...], tuple[str, str | None]] = OrderedDict()
 _MAP_DISK_CACHE_VERSION = "map-html-v2"
@@ -251,6 +253,13 @@ def _clean_graph3d_sessions(now: float | None = None) -> None:
     expired = [sid for sid, (expires_at, _) in _GRAPH3D_SESSIONS.items() if expires_at <= ts]
     for sid in expired:
         _GRAPH3D_SESSIONS.pop(sid, None)
+
+
+def _clean_graph3d_sync(now: float | None = None) -> None:
+    ts = time.time() if now is None else now
+    expired = [cid for cid, (expires_at, _, _) in _GRAPH3D_SYNC.items() if expires_at <= ts]
+    for cid in expired:
+        _GRAPH3D_SYNC.pop(cid, None)
 
 
 def _node_label(attrs: dict[str, Any], fallback: str) -> str:
@@ -512,24 +521,54 @@ def create_graph3d_session(
     graph_viz_mode: str,
     path_stop_ids: list[str] | None,
     path_station_ids: list[str] | None,
+    selected_stop_id: str | None = None,
+    selected_station_id: str | None = None,
+    view_fingerprint: str | None = None,
 ) -> dict[str, Any]:
     gv = graph_viz_mode if graph_viz_mode in ("stop", "station", "hybrid") else "stop"
     base = _base_graph3d_project(mode, use_lcc, gv)
-    route_ids = [str(x) for x in (path_station_ids if gv == "station" else path_stop_ids) or [] if str(x)]
+    stop_path = [str(x) for x in (path_stop_ids or []) if str(x).strip()]
+    station_path = [str(x) for x in (path_station_ids or []) if str(x).strip()]
+    route_ids = station_path if gv == "station" else stop_path
     route_node_set = set(route_ids)
     route_node_order = {node_id: idx for idx, node_id in enumerate(route_ids)}
     route_edge_order = {
         _edge_route_key(a, b): idx for idx, (a, b) in enumerate(zip(route_ids, route_ids[1:]))
     }
 
+    sel_stop = (selected_stop_id or "").strip() or None
+    sel_station = (selected_station_id or "").strip() or None
+    select_ids: set[str] = set()
+    if gv == "station":
+        if sel_station:
+            select_ids.add(sel_station)
+        elif sel_stop:
+            idx = station_layer_for(mode, use_lcc)
+            mapped = idx.stop_to_station.get(sel_stop)
+            if mapped:
+                select_ids.add(mapped)
+    else:
+        if sel_stop:
+            select_ids.add(sel_stop)
+        elif sel_station and gv == "hybrid":
+            idx = station_layer_for(mode, use_lcc)
+            for stop_id in idx.station_to_stops.get(sel_station, []):
+                select_ids.add(str(stop_id))
+
     graph_data = base["graph_data"]
     nodes = []
     for node in graph_data["nodes"]:
         item = dict(node)
-        if item["id"] in route_node_set:
+        node_id = str(item.get("id") or "")
+        on_route = node_id in route_node_set
+        is_selected = node_id in select_ids and not on_route
+        if on_route:
             item["is_route"] = True
-            item["route_index"] = route_node_order.get(item["id"], 0)
+            item["route_index"] = route_node_order.get(node_id, 0)
             item["color"] = "#f97316"
+        elif is_selected:
+            item["is_selected"] = True
+            item["color"] = "#ef4444"
         nodes.append(item)
 
     edges = []
@@ -549,8 +588,13 @@ def create_graph3d_session(
             "route_node_count": len(route_ids),
             "route_edge_count": len(route_edge_order),
             "has_route": bool(route_ids),
+            "selected_stop_id": sel_stop,
+            "selected_station_id": sel_station,
+            "selected_node_count": len(select_ids),
         }
     )
+    if view_fingerprint:
+        metadata["view_fingerprint"] = view_fingerprint
     project = {
         **base,
         "id": f"{base['id']}-{uuid.uuid4().hex[:8]}",
@@ -571,6 +615,57 @@ def get_graph3d_session(session_id: str) -> dict[str, Any] | None:
     if not row:
         return None
     return row[1]
+
+
+def push_graph3d_sync(
+    *,
+    client_id: str,
+    fingerprint: str,
+    mode: str,
+    use_lcc: bool,
+    graph_viz_mode: str,
+    path_stop_ids: list[str] | None,
+    path_station_ids: list[str] | None,
+    selected_stop_id: str | None = None,
+    selected_station_id: str | None = None,
+) -> dict[str, Any]:
+    fp = (fingerprint or "").strip()
+    cid = (client_id or "").strip()
+    if not cid or not fp:
+        raise ValueError("client_id and fingerprint are required for graph3d sync")
+    session = create_graph3d_session(
+        mode=mode,
+        use_lcc=use_lcc,
+        graph_viz_mode=graph_viz_mode,
+        path_stop_ids=path_stop_ids,
+        path_station_ids=path_station_ids,
+        selected_stop_id=selected_stop_id,
+        selected_station_id=selected_station_id,
+        view_fingerprint=fp,
+    )
+    now = time.time()
+    _clean_graph3d_sync(now)
+    _GRAPH3D_SYNC[cid] = (now + GRAPH3D_SYNC_TTL_S, session["session_id"], fp)
+    return {
+        "session_id": session["session_id"],
+        "fingerprint": fp,
+        "expires_in_s": GRAPH3D_SYNC_TTL_S,
+    }
+
+
+def peek_graph3d_sync(client_id: str, fingerprint: str | None = None) -> dict[str, Any]:
+    cid = (client_id or "").strip()
+    if not cid:
+        return {"changed": False}
+    _clean_graph3d_sync()
+    row = _GRAPH3D_SYNC.get(cid)
+    if not row:
+        return {"changed": False}
+    _, session_id, fp = row
+    known = (fingerprint or "").strip()
+    if known and known == fp:
+        return {"changed": False, "session_id": session_id, "fingerprint": fp}
+    return {"changed": True, "session_id": session_id, "fingerprint": fp}
 
 
 @lru_cache(maxsize=32)
@@ -595,6 +690,7 @@ def render_transport_map_html(
     graph_viz_mode: str = "stop",
     expanded_station_id: str | None = None,
     path_station_ids: list[str] | None = None,
+    exploration_overlay: dict[str, Any] | None = None,
 ) -> tuple[str, str | None]:
     from src.viz.plot_mapbox import render_mapbox_gl_html
 
@@ -616,6 +712,7 @@ def render_transport_map_html(
         (expanded_station_id or "").strip(),
         _tuple_or_empty(path_station_ids),
         default_basemap_style(),
+        str(exploration_overlay or ""),
     )
     cached = _map_cache_get(cache_key)
     if cached is not None:
@@ -635,6 +732,8 @@ def render_transport_map_html(
         expanded_station_id=expanded_station_id,
         poi_category_key=poi_category_key,
     )
+    if exploration_overlay:
+        use_disk_cache = False
     if use_disk_cache:
         disk_cached = _disk_map_cache_get(cache_key, token=token, token_src=token_src)
         if disk_cached is not None:
@@ -689,9 +788,10 @@ def render_transport_map_html(
         expanded_station_id=(expanded_station_id or "").strip() or None,
         station_network_points=st_pts,
         station_network_lines=st_lines,
-        suppress_stop_markers=(gv == "station"),
+        suppress_stop_markers=(gv == "station") or bool(exploration_overlay),
         suppress_base_network=route_focus,
         station_layer_index=idx if gv != "stop" else None,
+        exploration_overlay=exploration_overlay,
     )
     result = (map_html, token_src)
     _map_cache_set(cache_key, result)
@@ -769,6 +869,22 @@ def _format_search_matches(
     return out
 
 
+def _route_path_details(
+    G: Any,
+    path: list[str],
+    *,
+    mode: str,
+    idx: Any | None = None,
+) -> dict[str, Any]:
+    from src.core.path_legs import describe_path_legs
+
+    detail = describe_path_legs(G, path, station_idx=idx, current_mode=mode)
+    return {
+        "path_legs": detail["legs"],
+        "path_summary": detail["text_lines"],
+    }
+
+
 def compute_route(
     from_stop_id: str, to_stop_id: str, *, mode: str, use_lcc: bool
 ) -> dict[str, Any]:
@@ -784,12 +900,15 @@ def compute_route(
         path = res.get("path") or []
         station_path = station_path_from_stop_path([str(x) for x in path], idx) if path else []
         station_names = [idx.station_label.get(sid, sid) for sid in station_path]
+        path_details = _route_path_details(G, [str(x) for x in path], mode=mode, idx=idx)
         return {
             "ok": True,
             "routing_scope": "stop",
             "path": path,
             "station_path": station_path,
             "station_names": station_names,
+            "path_legs": path_details["path_legs"],
+            "path_summary": path_details["path_summary"],
             "result": {
                 "distance_m": res.get("distance_m"),
                 "time_s": res.get("time_s"),
@@ -876,12 +995,15 @@ def compute_route_stations(
         station_path = station_path_from_stop_path([str(x) for x in path], idx)
         station_names = [idx.station_label.get(sid, sid) for sid in station_path]
         entry, exit_ = (pair[0], pair[1]) if pair and pair[0] and pair[1] else (None, None)
+        path_details = _route_path_details(G, [str(x) for x in path], mode=mode, idx=idx)
         return {
             "ok": True,
             "routing_scope": "station",
             "path": path,
             "station_path": station_path,
             "station_names": station_names,
+            "path_legs": path_details["path_legs"],
+            "path_summary": path_details["path_summary"],
             "result": {
                 "distance_m": summary.get("distance_m"),
                 "time_s": summary.get("time_s"),

@@ -35,7 +35,16 @@ def get_context() -> dict[str, Any]:
             "recent_events": list(_events)[-20:],
             "pending_tasks": list(_pending_tasks.values())[-10:],
             "capabilities": {
-                "transport": ["search_stops", "compute_route", "map", "graph3d"],
+                "transport": [
+                    "search_stops",
+                    "nearby_stops",
+                    "nearby_pois",
+                    "explore_area",
+                    "filter_results",
+                    "compute_route",
+                    "map",
+                    "graph3d",
+                ],
                 "memory": ["projects", "tasks"],
                 "music": ["spotify_play", "spotify_pause", "spotify_next"],
                 "ui": ["set_mode", "transport_action", "structured_outputs"],

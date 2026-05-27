@@ -41,6 +41,7 @@ from planner_live_test_lib import (  # noqa: E402
     score_multi_step,
     score_multi_step_ordered,
     score_partial_route_with_todo,
+    score_planned_tool,
     score_route_and_todo,
     score_route_shortcut,
     score_shortcut_fast,
@@ -51,20 +52,24 @@ from planner_live_test_lib import (  # noqa: E402
 def build_test_cases(*, include_optional_fallback: bool) -> list[TestCase]:
     cases: list[TestCase] = []
 
-    # 1. Single known shortcuts
+    # 1. Simple commands (OpenAI planner or allowlisted shortcuts)
     cat1 = [
-        ("Open the transport map", {"cspe_open_transport_map"}),
-        ("Search stops near Republique", {"cspe_search_stops"}),
-        ("Show the 3D graph", {"cspe_open_graph3d"}),
-        ("Switch to transport mode", {"cspe_set_mode"}),
-        ("Add a todo to leave in 15 minutes", {"memory_add"}),
+        ("Open the transport map", {"cspe_open_transport_map", "cspe_update_map"}, False),
+        ("Search stops near Republique", {"cspe_search_stops", "cspe_show_station_or_line_info"}, False),
+        ("Show the 3D graph", {"cspe_open_graph3d"}, True),
+        ("Switch to transport mode", {"cspe_set_mode"}, True),
+        ("Add a todo to leave in 15 minutes", {"memory_add"}, False),
     ]
-    for cmd, tools in cat1:
+    for cmd, tools, require_shortcut in cat1:
         cases.append(
             TestCase(
                 category="1.shortcuts",
                 command=cmd,
-                scorer=lambda m, t=tools: score_shortcut_fast(m, expected_tools=t),
+                scorer=lambda m, t=tools, rs=require_shortcut: (
+                    score_shortcut_fast(m, expected_tools=t)
+                    if rs
+                    else score_planned_tool(m, expected_tools=t, allow_openai=True)
+                ),
             )
         )
 
@@ -206,6 +211,34 @@ def build_test_cases(*, include_optional_fallback: bool) -> list[TestCase]:
                     scorer=lambda m, mk=marker: score_forced_fallback(m, marker=mk),
                 )
             )
+
+    # 9. Transport area exploration (OpenAI planner + new registered tools)
+    exploration: list[tuple[str, set[str]]] = [
+        ("show stops around Republique", {"cspe_nearby_stops", "cspe_explore_area"}),
+        ("find metro stops within 300 meters of Chatelet", {"cspe_nearby_stops", "cspe_explore_area"}),
+        ("show restaurants around Gare de Lyon", {"cspe_nearby_pois", "cspe_explore_area"}),
+        (
+            "what points of interest are near La Defense within 500 meters?",
+            {"cspe_nearby_pois", "cspe_explore_area"},
+        ),
+        ("explore the area around Republique", {"cspe_explore_area"}),
+        ("show transport and cafés around Chatelet", {"cspe_explore_area", "cspe_nearby_stops", "cspe_nearby_pois"}),
+        ("filter results to within 300 meters", {"cspe_filter_visible_results"}),
+        ("show only POIs, no stops", {"cspe_filter_visible_results", "cspe_explore_area"}),
+        ("show only bus stops around Gare du Nord", {"cspe_nearby_stops", "cspe_explore_area"}),
+        (
+            "what is around this station?",
+            {"cspe_explore_area", "cspe_get_current_context", "cspe_nearby_stops"},
+        ),
+    ]
+    for cmd, tools in exploration:
+        cases.append(
+            TestCase(
+                category="9.exploration",
+                command=cmd,
+                scorer=lambda m, t=tools: score_planned_tool(m, expected_tools=t, allow_openai=True),
+            )
+        )
 
     return cases
 

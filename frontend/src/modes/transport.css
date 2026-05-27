@@ -15,13 +15,21 @@
   --transport-dock-gap: 16px;
 }
 
+.transport-root--chrome-hidden .transport-left-stack,
+.transport-root--chrome-hidden .transport-dock-cluster,
+.transport-root--chrome-hidden .transport-suggest-layer,
+.transport-root--chrome-hidden .transport-map-loading {
+  display: none !important;
+}
+
 .transport-map-wrap {
   position: absolute;
   inset: 0;
   z-index: 0;
 }
 
-.transport-map-wrap iframe {
+.transport-map-wrap iframe,
+.transport-graph3d-iframe {
   width: 100%;
   height: 100%;
   border: none;
@@ -394,49 +402,34 @@
   color: rgba(148, 163, 184, 0.85);
 }
 
-.transport-graph-toggles {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 8px 0 10px;
-  width: 100%;
-}
-
-.transport-toggle-btn {
-  width: 100%;
-  box-sizing: border-box;
-  text-align: center;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  background: rgba(10, 14, 22, 0.55);
-  color: rgba(200, 220, 235, 0.85);
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1.35;
-  cursor: pointer;
-  transition: border-color 0.15s, background 0.15s, color 0.15s;
-}
-
-.transport-toggle-btn:hover {
-  border-color: rgba(148, 163, 184, 0.4);
-  color: #e2e8f0;
-}
-
-.transport-toggle-btn--on {
-  background: rgba(148, 163, 184, 0.12);
-  border-color: rgba(148, 163, 184, 0.5);
-  color: #e2e8f0;
-  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.12);
-}
-
 .transport-route-meta {
   font-size: 11px;
   line-height: 1.45;
-  color: rgba(200, 220, 235, 0.88);
+  color: rgba(148, 163, 184, 0.95);
   margin-top: 8px;
+}
+
+.transport-route-legs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.transport-route-leg {
+  border-left: 3px solid;
+  padding: 4px 0 4px 10px;
+}
+
+.transport-route-leg--transfer {
+  opacity: 0.92;
+}
+
+.transport-route-leg__summary {
+  font-size: 11px;
+  line-height: 1.45;
+  color: rgba(226, 232, 240, 0.95);
+  word-break: break-word;
 }
 
 .transport-route-err {

@@ -1,32 +1,25 @@
-import { useEffect } from "react";
 import { ToolRail } from "./ToolRail";
 import { AtlasRailPanel } from "./AtlasRailPanel";
 import { AgentContextSync } from "./AgentContextSync";
 import { ShellCommandListener } from "./ShellCommandListener";
+import { MapFocusHotkey } from "./MapFocusHotkey";
 import { TransportMode } from "../modes/TransportMode";
 import { VisualBoardMode } from "../modes/VisualBoardMode";
 import { MemoryMode } from "../modes/MemoryMode";
 import { MusicMode } from "../modes/MusicMode";
 import { useAppStore } from "../store";
 
-const APP_PAGE_TITLE = "ATLAS - Dashboard";
-
 export function AppShell() {
   const mode = useAppStore((s) => s.mode);
   const setMode = useAppStore((s) => s.setMode);
-
-  useEffect(() => {
-    document.title = APP_PAGE_TITLE;
-  }, []);
+  const mapChromeHidden = useAppStore((s) => s.transportMapChromeHidden);
+  const mapFocusActive = mode === "transport" && mapChromeHidden;
 
   return (
-    <div className="app-root">
+    <div className={`app-root${mapFocusActive ? " app-root--map-focus" : ""}`}>
       <ShellCommandListener />
       <AgentContextSync />
-      <header className="app-topbar">
-        <i className="fa-solid fa-hexagon-nodes app-topbar__icon" aria-hidden />
-        <span className="app-topbar__title">{APP_PAGE_TITLE}</span>
-      </header>
+      <MapFocusHotkey />
       <div className="app-root__body">
         <ToolRail mode={mode} onMode={setMode} />
         <div className="app-shell__main">
@@ -58,7 +51,7 @@ export function AppShell() {
             <MusicMode />
           </div>
         )}
-        <AtlasRailPanel />
+        {!mapFocusActive && <AtlasRailPanel />}
         </div>
       </div>
     </div>

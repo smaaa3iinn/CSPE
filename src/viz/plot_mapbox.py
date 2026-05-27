@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from functools import lru_cache
 from html import escape
 from pathlib import Path
@@ -40,72 +41,18 @@ def normalize_mapbox_style_url(style: str) -> str:
 DEFAULT_MAPBOX_BASEMAP_STYLE = "mapbox://styles/mapbox/dark-v11"
 
 
-MODE_COLORS = {
-    "bus": "#2563eb",
-    "tram": "#db2777",
-    "metro": "#7c3aed",
-    "rail": "#059669",
-    "other": "#64748b",
-    "multi": "#94a3b8",
-    "transfer": "#f59e0b",
-    "path": "#ef4444",
-    "selected": "#f97316",
-}
-METRO_LINE_COLORS = {
-    "1": "#FECD02",
-    "2": "#0E75BC",
-    "3": "#A09E44",
-    "3B": "#87D2DF",
-    "4": "#BA4A9C",
-    "5": "#F68F4A",
-    "6": "#77C696",
-    "7": "#F59EB2",
-    "7B": "#77C696",
-    "8": "#C4A2CB",
-    "9": "#CDC82A",
-    "10": "#E0B03A",
-    "11": "#8D6539",
-    "12": "#008B59",
-    "13": "#87D2DF",
-    "14": "#642D91",
-    "15": "#B60C4A",
-    "16": "#F59EB2",
-    "17": "#CDC82A",
-    "18": "#00B297",
-}
-RAIL_LINE_COLORS = {
-    "A": "#F75C4C",
-    "B": "#B2D6F2",
-    "C": "#986E05",
-    "D": "#77AF98",
-    "E": "#D582BC",
-    "H": "#A38869",
-    "J": "#B8B705",
-    "K": "#A6A560",
-    "L": "#87627F",
-    "N": "#9EDCD8",
-    "P": "#D77D4F",
-    "R": "#D66D98",
-    "U": "#BB446B",
-    "V": "#6D6F03",
-}
-TRAM_LINE_COLORS = {
-    "T1": "#709FDD",
-    "T2": "#C76FAB",
-    "T3A": "#FCA371",
-    "T3B": "#70A790",
-    "T4": "#E9C373",
-    "T5": "#A470B4",
-    "T6": "#F8706F",
-    "T7": "#AB9880",
-    "T8": "#ACAC71",
-    "T9": "#92C0E8",
-    "T10": "#B3B27A",
-    "T11": "#FCB081",
-    "T12": "#CF899F",
-    "T13": "#BEB29E",
-    "T14": "#88D2CA",
-}
+from src.core.route_styles import (
+    METRO_LINE_COLORS,
+    MODE_COLORS,
+    RAIL_LINE_COLORS,
+    TRAM_LINE_COLORS,
+    path_edge_style,
+)
+from src.core.route_styles import (
+    _metro_line_key as _metro_line_key,
+    _rail_line_key as _rail_line_key,
+    _tram_line_key as _tram_line_key,
+)
 POI_BADGE_STYLES = {
     "food": {"color": "#f97316", "icon_class": "fa-solid fa-utensils"},
     "shopping": {"color": "#2563eb", "icon_class": "fa-solid fa-basket-shopping"},
@@ -243,45 +190,6 @@ def _friendly_route_labels(mode: str, short_name: str, long_name: str) -> set[st
         labels.add(_normalize_label(f"Bus {short}"))
 
     return {label for label in labels if label}
-
-
-def _metro_line_key(value: Any) -> str | None:
-    text = str(value or "").strip().upper().replace(" ", "")
-    if not text:
-        return None
-    if text in {"3B", "3BIS"}:
-        return "3B"
-    if text in {"7B", "7BIS"}:
-        return "7B"
-    return text
-
-
-def _rail_line_key(short_name: Any, long_name: Any) -> str | None:
-    for value in (short_name, long_name):
-        text = str(value or "").strip().upper().replace(" ", "")
-        if not text:
-            continue
-        if text in RAIL_LINE_COLORS:
-            return text
-        if text.startswith("RER") and len(text) > 3:
-            candidate = text[3:]
-            if candidate in RAIL_LINE_COLORS:
-                return candidate
-    return None
-
-
-def _tram_line_key(short_name: Any, long_name: Any) -> str | None:
-    for value in (short_name, long_name):
-        text = str(value or "").strip().upper().replace(" ", "")
-        if not text:
-            continue
-        if text in TRAM_LINE_COLORS:
-            return text
-        if text.startswith("TRAM"):
-            candidate = text[4:]
-            if candidate in TRAM_LINE_COLORS:
-                return candidate
-    return None
 
 
 def _route_type_to_mode(route_type: Any) -> str:
@@ -1516,11 +1424,11 @@ def _path_geometry_segments(
     path: list[str] | None,
     current_mode: str,
     line_geometries: dict[str, Any] | None,
-) -> tuple[list[list[tuple[float, float]]], dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if not path or len(path) < 2:
         return [], {"summary": {"route_id": 0, "heuristic_label": 0, "straight_fallback": 0}, "segments": []}
 
-    segments: list[list[tuple[float, float]]] = []
+    segment_rows: list[dict[str, Any]] = []
     debug_rows: list[dict[str, Any]] = []
     summary = {"route_id": 0, "heuristic_label": 0, "straight_fallback": 0}
 
@@ -1535,14 +1443,16 @@ def _path_geometry_segments(
             continue
 
         data = G.get_edge_data(u, v) or {}
+        style = path_edge_style(data, current_mode)
         route_refs = _edge_route_refs(data)
         match_type = "straight_fallback"
         candidate_route_ids: list[str] = []
         candidate_labels: list[str] = []
         matched_feature = None
+        geometry_segments: list[list[tuple[float, float]]] = []
 
-        if data.get("edge_kind") == "transfer":
-            segments.append([start_point, end_point])
+        if style["edge_kind"] == "transfer":
+            geometry_segments = [[start_point, end_point]]
             summary["straight_fallback"] += 1
             debug_rows.append(
                 {
@@ -1550,7 +1460,7 @@ def _path_geometry_segments(
                     "from_stop_id": u,
                     "to_stop_id": v,
                     "edge_kind": "transfer",
-                    "edge_mode": str(data.get("mode") or "transfer"),
+                    "edge_mode": "transfer",
                     "match_type": match_type,
                     "edge_route_ids": [],
                     "edge_route_labels": [],
@@ -1561,64 +1471,78 @@ def _path_geometry_segments(
                     "matched_geojson_long_name": "",
                 }
             )
-            continue
+        else:
+            candidate_modes = [current_mode] if current_mode != "all" else [
+                mode for mode in _split_modes(str(data.get("modes") or data.get("mode") or "")) if mode != "transfer"
+            ]
+            if not candidate_modes:
+                candidate_modes = [str(data.get("mode") or "other")]
 
-        candidate_modes = [current_mode] if current_mode != "all" else [
-            mode for mode in _split_modes(str(data.get("modes") or data.get("mode") or "")) if mode != "transfer"
-        ]
-        if not candidate_modes:
-            candidate_modes = [str(data.get("mode") or "other")]
-
-        piece = None
-        if line_geometries:
-            features_by_route_id, candidate_route_ids = _candidate_features_by_route_id(
-                line_geometries,
-                candidate_modes,
-                route_refs,
-            )
-            piece, matched_feature = _best_segment_between_points(features_by_route_id, start_point, end_point)
-            if piece is not None:
-                match_type = "route_id"
-            else:
-                features_by_label, candidate_labels = _candidate_features_by_label(
+            piece = None
+            if line_geometries:
+                features_by_route_id, candidate_route_ids = _candidate_features_by_route_id(
                     line_geometries,
                     candidate_modes,
                     route_refs,
-                    attrs_u,
-                    attrs_v,
                 )
-                piece, matched_feature = _best_segment_between_points(features_by_label, start_point, end_point)
+                piece, matched_feature = _best_segment_between_points(features_by_route_id, start_point, end_point)
                 if piece is not None:
-                    match_type = "heuristic_label"
+                    match_type = "route_id"
+                else:
+                    features_by_label, candidate_labels = _candidate_features_by_label(
+                        line_geometries,
+                        candidate_modes,
+                        route_refs,
+                        attrs_u,
+                        attrs_v,
+                    )
+                    piece, matched_feature = _best_segment_between_points(features_by_label, start_point, end_point)
+                    if piece is not None:
+                        match_type = "heuristic_label"
 
-        if piece is None:
-            piece = [start_point, end_point]
+            if piece is None:
+                piece = [start_point, end_point]
 
-        summary[match_type] += 1
-        segments.append(piece)
-        debug_rows.append(
+            summary[match_type] += 1
+            geometry_segments = [piece]
+            debug_rows.append(
+                {
+                    "segment_index": len(debug_rows) + 1,
+                    "from_stop_id": u,
+                    "to_stop_id": v,
+                    "edge_kind": str(data.get("edge_kind") or "ride"),
+                    "edge_mode": str(style.get("mode") or current_mode),
+                    "match_type": match_type,
+                    "edge_route_ids": [ref["route_id"] for ref in route_refs if ref.get("route_id")],
+                    "edge_route_labels": [ref["route_label"] for ref in route_refs if ref.get("route_label")],
+                    "candidate_route_ids": candidate_route_ids,
+                    "candidate_labels": candidate_labels,
+                    "matched_geojson_route_id": "" if matched_feature is None else str(matched_feature.get("route_id") or ""),
+                    "matched_geojson_short_name": ""
+                    if matched_feature is None
+                    else str(matched_feature.get("route_short_name") or ""),
+                    "matched_geojson_long_name": ""
+                    if matched_feature is None
+                    else str(matched_feature.get("route_long_name") or ""),
+                }
+            )
+
+        is_transfer = style["edge_kind"] == "transfer"
+        segment_rows.append(
             {
-                "segment_index": len(debug_rows) + 1,
+                "geometry_segments": geometry_segments,
+                "color": style["color"],
+                "line_label": style["line_label"],
+                "edge_kind": style["edge_kind"],
+                "mode": style["mode"],
+                "width": 3.2 if is_transfer else 4.8,
+                "opacity": 0.88 if is_transfer else 1.0,
                 "from_stop_id": u,
                 "to_stop_id": v,
-                "edge_kind": str(data.get("edge_kind") or "ride"),
-                "edge_mode": str(data.get("mode") or current_mode),
-                "match_type": match_type,
-                "edge_route_ids": [ref["route_id"] for ref in route_refs if ref.get("route_id")],
-                "edge_route_labels": [ref["route_label"] for ref in route_refs if ref.get("route_label")],
-                "candidate_route_ids": candidate_route_ids,
-                "candidate_labels": candidate_labels,
-                "matched_geojson_route_id": "" if matched_feature is None else str(matched_feature.get("route_id") or ""),
-                "matched_geojson_short_name": ""
-                if matched_feature is None
-                else str(matched_feature.get("route_short_name") or ""),
-                "matched_geojson_long_name": ""
-                if matched_feature is None
-                else str(matched_feature.get("route_long_name") or ""),
             }
         )
 
-    return segments, {"summary": summary, "segments": debug_rows}
+    return segment_rows, {"summary": summary, "segments": debug_rows}
 
 
 def plot_graph_mapbox(
@@ -1652,16 +1576,19 @@ def plot_graph_mapbox(
         if transfer_trace is not None:
             traces.append(transfer_trace)
 
-    path_segments, path_debug = _path_geometry_segments(G, path, mode, line_geometries)
-    path_trace = _build_geometry_trace(
-        path_segments,
-        color=MODE_COLORS["path"],
-        width=4.8,
-        opacity=1.0,
-        name="Selected path",
-    )
-    if path_trace is not None:
-        traces.append(path_trace)
+    path_segment_rows, path_debug = _path_geometry_segments(G, path, mode, line_geometries)
+    path_traces: list[go.Scattermapbox] = []
+    for row in path_segment_rows:
+        trace = _build_geometry_trace(
+            row["geometry_segments"],
+            color=row["color"],
+            width=row["width"],
+            opacity=row["opacity"],
+            name=str(row["line_label"]),
+        )
+        if trace is not None:
+            path_traces.append(trace)
+    traces.extend(path_traces)
 
     lats: list[float] = []
     lons: list[float] = []
@@ -1870,21 +1797,213 @@ def _path_feature_collection(
     current_mode: str,
     line_geometries: dict[str, Any] | None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    path_segments, path_debug = _path_geometry_segments(G, path, current_mode, line_geometries)
-    feature = _segments_to_multiline_feature(
-        path_segments,
-        properties={
-            "name": "Selected path",
-            "color": MODE_COLORS["path"],
-            "width": 4.8,
-            "opacity": 1.0,
-        },
-    )
-    features = [] if feature is None else [feature]
+    segment_rows, path_debug = _path_geometry_segments(G, path, current_mode, line_geometries)
+    features: list[dict[str, Any]] = []
+    for row in segment_rows:
+        feature = _segments_to_multiline_feature(
+            row["geometry_segments"],
+            properties={
+                "name": row["line_label"],
+                "color": row["color"],
+                "width": row["width"],
+                "opacity": row["opacity"],
+                "edge_kind": row["edge_kind"],
+                "mode": row["mode"],
+            },
+        )
+        if feature is not None:
+            features.append(feature)
     return {"type": "FeatureCollection", "features": features}, path_debug
 
 
-def render_mapbox_gl_html( 
+def _zoom_for_radius_m(radius_m: float | int | None) -> float:
+    try:
+        r = float(radius_m or 500)
+    except (TypeError, ValueError):
+        r = 500.0
+    if r <= 300:
+        return 15.5
+    if r <= 500:
+        return 15.0
+    if r <= 800:
+        return 14.5
+    if r <= 1200:
+        return 14.0
+    if r <= 2000:
+        return 13.5
+    if r <= 3000:
+        return 13.0
+    return 12.5
+
+
+def _short_map_label(text: str, max_len: int = 22) -> str:
+    cleaned = " ".join(str(text or "?").split())
+    if len(cleaned) <= max_len:
+        return cleaned
+    return cleaned[: max_len - 1].rstrip() + "…"
+
+
+def _center_and_zoom_for_exploration(exploration: dict[str, Any]) -> tuple[dict[str, float], float] | None:
+    center = exploration.get("center")
+    if not isinstance(center, dict):
+        return None
+    if center.get("lat") is None or center.get("lon") is None:
+        return None
+
+    clat = float(center["lat"])
+    clon = float(center["lon"])
+
+    try:
+        radius_m = float(exploration.get("radius_m") or 0)
+    except (TypeError, ValueError):
+        radius_m = 0.0
+
+    stops_fc = exploration.get("stops") if isinstance(exploration.get("stops"), dict) else {}
+    pois_fc = exploration.get("pois") if isinstance(exploration.get("pois"), dict) else {}
+    stop_n = len(stops_fc.get("features") or [])
+    poi_n = len(pois_fc.get("features") or [])
+
+    # Stops need a wider frame; POI-only views stay street-level for label readability.
+    if stop_n > 0:
+        zoom = 15.0 if radius_m <= 1200 else 14.0
+    elif poi_n > 0:
+        zoom = 17.5 if radius_m <= 1200 else 16.5
+    else:
+        zoom = 17.5 if radius_m <= 1200 else 16.5
+    return {"lat": clat, "lon": clon}, zoom
+
+
+def _exploration_geojson(overlay: dict[str, Any] | None) -> dict[str, Any]:
+    empty: dict[str, Any] = {"type": "FeatureCollection", "features": []}
+    if not overlay:
+        return {
+            "stops": empty,
+            "pois": empty,
+            "center_point": empty,
+            "center": None,
+            "radius_m": None,
+        }
+
+    center = overlay.get("center") if isinstance(overlay.get("center"), dict) else {}
+    radius_m = overlay.get("radius_m")
+    center_lat = center.get("lat")
+    center_lon = center.get("lon")
+    center_out = None
+    center_features: list[dict[str, Any]] = []
+    if center_lat is not None and center_lon is not None:
+        center_label = str(
+            center.get("label") or center.get("station_name") or center.get("stop_name") or "Center"
+        )
+        center_out = {
+            "lat": float(center_lat),
+            "lon": float(center_lon),
+            "label": center_label,
+            "station_id": center.get("station_id"),
+            "stop_id": center.get("stop_id"),
+        }
+        center_features.append(
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [float(center_lon), float(center_lat)],
+                },
+                "properties": {
+                    "name": center_label,
+                    "label": _short_map_label(center_label, 26),
+                    "kind": "exploration_center",
+                    "hover_html": f'<div class="hover-popup"><strong>{escape(center_label)}</strong><div>Search center</div></div>',
+                },
+            }
+        )
+
+    stop_features: list[dict[str, Any]] = []
+    for row in overlay.get("nearby_stops") or []:
+        if not isinstance(row, dict):
+            continue
+        coords = row.get("coordinates") or {}
+        lat, lon = coords.get("lat"), coords.get("lon")
+        if lat is None or lon is None:
+            continue
+        if (
+            center_out is not None
+            and abs(float(lat) - center_out["lat"]) < 1e-6
+            and abs(float(lon) - center_out["lon"]) < 1e-6
+        ):
+            continue
+        name = str(row.get("station_name") or row.get("stop_name") or row.get("station_id") or "?")
+        dist = row.get("distance_m")
+        stop_features.append(
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [float(lon), float(lat)]},
+                "properties": {
+                    "name": name,
+                    "label": _short_map_label(name, 20),
+                    "distance_m": dist,
+                    "kind": "nearby_stop",
+                    "hover_html": (
+                        f'<div class="hover-popup"><strong>{escape(name)}</strong>'
+                        f'<div>{int(dist)} m away</div></div>'
+                        if dist is not None
+                        else f'<div class="hover-popup"><strong>{escape(name)}</strong></div>'
+                    ),
+                },
+            }
+        )
+
+    poi_features: list[dict[str, Any]] = []
+    for row in overlay.get("nearby_pois") or []:
+        if not isinstance(row, dict):
+            continue
+        coords = row.get("coordinates") or {}
+        lat, lon = coords.get("lat"), coords.get("lon")
+        if lat is None or lon is None:
+            continue
+        name = str(row.get("name") or row.get("type") or "POI")
+        cat = str(row.get("type") or row.get("category") or "")
+        dist = row.get("distance_m")
+        poi_features.append(
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [float(lon), float(lat)]},
+                "properties": {
+                    "name": name,
+                    "label": _short_map_label(name, 18),
+                    "category": cat,
+                    "distance_m": dist,
+                    "kind": "nearby_poi",
+                    "hover_html": (
+                        f'<div class="hover-popup"><strong>{escape(name)}</strong>'
+                        f'<div>{escape(cat)} · {int(dist)} m</div></div>'
+                        if dist is not None
+                        else f'<div class="hover-popup"><strong>{escape(name)}</strong></div>'
+                    ),
+                },
+            }
+        )
+
+    return {
+        "stops": {"type": "FeatureCollection", "features": stop_features},
+        "pois": {"type": "FeatureCollection", "features": poi_features},
+        "center_point": {"type": "FeatureCollection", "features": center_features},
+        "center": center_out,
+        "radius_m": radius_m,
+    }
+
+
+def build_exploration_overlay_update(overlay: dict[str, Any] | None) -> dict[str, Any]:
+    """Lightweight exploration payload for incremental map overlay updates (no full HTML)."""
+    exploration = _exploration_geojson(overlay)
+    fit = _center_and_zoom_for_exploration(exploration)
+    view: dict[str, float] | None = None
+    if fit:
+        center, zoom = fit
+        view = {"lat": float(center["lat"]), "lon": float(center["lon"]), "zoom": float(zoom)}
+    return {"exploration": exploration, "view": view}
+
+
+def render_mapbox_gl_html(
     G: nx.Graph,
     *,
     mapbox_token: str,
@@ -1913,7 +2032,9 @@ def render_mapbox_gl_html(
     suppress_stop_markers: bool = False,
     suppress_base_network: bool = False,
     station_layer_index: StationLayerIndex | None = None,
+    exploration_overlay: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
+    render_t0 = time.perf_counter()
     active_render_graph = _active_render_graph_for_mode(mode, render_graphs_by_mode)
     center, zoom = _center_and_zoom(G, render_nodes=None if active_render_graph is None else active_render_graph.get("nodes"))
     network_source = _network_feature_collection(
@@ -2007,6 +2128,7 @@ def render_mapbox_gl_html(
         "paris_mask_fill_color": "#06080A",
         "paris_mask_fill_opacity": 0.9,
         "render_world_copies": True,
+        "exploration": _exploration_geojson(exploration_overlay),
     }
     try:
         paris_view = build_paris_mask_payload()
@@ -2031,6 +2153,13 @@ def render_mapbox_gl_html(
         map_payload["center"] = c_fit
         map_payload["zoom"] = z_fit
         map_payload["paris_max_bounds"] = None
+    elif exploration_overlay and map_payload.get("exploration", {}).get("center"):
+        fit = _center_and_zoom_for_exploration(map_payload["exploration"])
+        if fit:
+            c_fit, z_fit = fit
+            map_payload["center"] = c_fit
+            map_payload["zoom"] = z_fit
+            map_payload["paris_max_bounds"] = None
 
     log_event(
         LOGGER,
@@ -2056,6 +2185,7 @@ def render_mapbox_gl_html(
         poi_limit=poi_limit,
         poi_category_key=poi_category_key,
         path_debug=path_debug,
+        render_ms=(time.perf_counter() - render_t0) * 1000.0,
     )
     payload_json = json.dumps(map_payload, ensure_ascii=True, separators=(",", ":"))
 
@@ -2440,6 +2570,13 @@ def render_mapbox_gl_html(
   <script>
     const payload = {payload_json};
     mapboxgl.accessToken = payload.token;
+    const centerRaw = payload.center || {{}};
+    const mapCenter = Array.isArray(centerRaw)
+      ? centerRaw
+      : [Number(centerRaw.lon), Number(centerRaw.lat)];
+    if (!Number.isFinite(mapCenter[0]) || !Number.isFinite(mapCenter[1])) {{
+      console.error('[CSPE Mapbox] invalid map center:', centerRaw);
+    }}
     const overlayRoot = document.getElementById('map-overlay-controls');
     const overlayToggle = document.getElementById('map-overlay-controls-toggle');
 
@@ -2465,7 +2602,7 @@ def render_mapbox_gl_html(
     const map = new mapboxgl.Map({{
       container: 'map',
       style: payload.basemap_style,
-      center: [payload.center.lon, payload.center.lat],
+      center: mapCenter,
       zoom: payload.zoom,
       pitch: initialPitch,
       bearing: payload.bearing,
@@ -2562,6 +2699,201 @@ def render_mapbox_gl_html(
         );
       }});
     }}
+
+    let mapExplorationReady = false;
+    const queuedExplorationMessages = [];
+    const EXPLORATION_LAYER_IDS = [
+      'exploration-center-label',
+      'exploration-center',
+      'exploration-stops-labels',
+      'exploration-stops',
+      'exploration-pois-labels',
+      'exploration-pois'
+    ];
+    const EXPLORATION_SOURCE_IDS = ['exploration-center', 'exploration-stops', 'exploration-pois'];
+    const explorationHoverLayers = new Set();
+
+    const addExplorationLabels = (sourceId, layerId, textColor, haloColor) => {{
+      map.addLayer({{
+        id: layerId,
+        type: 'symbol',
+        source: sourceId,
+        layout: {{
+          'text-field': ['get', 'label'],
+          'text-size': 10,
+          'text-offset': [0, 1.1],
+          'text-anchor': 'top',
+          'text-max-width': 7,
+          'text-line-height': 1.05,
+          'text-allow-overlap': false,
+          'text-optional': true,
+          'text-font': ['Open Sans Regular', 'Arial Unicode MS Regular']
+        }},
+        paint: {{
+          'text-color': textColor,
+          'text-halo-color': haloColor,
+          'text-halo-width': 1.2,
+          'text-halo-blur': 0.15
+        }}
+      }});
+    }};
+
+    const unbindExplorationHover = (layerId) => {{
+      if (!explorationHoverLayers.has(layerId)) {{
+        return;
+      }}
+      map.off('mouseenter', layerId);
+      map.off('mouseleave', layerId);
+      map.off('mousemove', layerId);
+      explorationHoverLayers.delete(layerId);
+    }};
+
+    const bindExplorationHover = (layerId) => {{
+      if (explorationHoverLayers.has(layerId)) {{
+        return;
+      }}
+      explorationHoverLayers.add(layerId);
+      map.on('mouseenter', layerId, () => {{ map.getCanvas().style.cursor = 'pointer'; }});
+      map.on('mouseleave', layerId, () => {{ map.getCanvas().style.cursor = ''; hoverPopup = ensurePopupRemoved(hoverPopup); }});
+      map.on('mousemove', layerId, (event) => {{
+        const feature = event.features && event.features[0];
+        if (!feature) return;
+        const coordinates = feature.geometry.coordinates.slice();
+        const hoverHtml = feature.properties.hover_html || buildLightHoverHtml(feature.properties || {{}});
+        hoverPopup = ensurePopupRemoved(hoverPopup);
+        hoverPopup = new mapboxgl.Popup({{ closeButton: false, closeOnClick: false, className: 'hover-popup', offset: 12 }})
+          .setLngLat(coordinates)
+          .setHTML(hoverHtml)
+          .addTo(map);
+      }});
+    }};
+
+    const clearExplorationOverlay = () => {{
+      for (const layerId of EXPLORATION_LAYER_IDS) {{
+        unbindExplorationHover(layerId);
+        if (map.getLayer(layerId)) {{
+          map.removeLayer(layerId);
+        }}
+      }}
+      for (const sourceId of EXPLORATION_SOURCE_IDS) {{
+        if (map.getSource(sourceId)) {{
+          map.removeSource(sourceId);
+        }}
+      }}
+    }};
+
+    const applyExplorationOverlay = (exploration, view) => {{
+      if (!mapExplorationReady) {{
+        return;
+      }}
+      clearExplorationOverlay();
+      if (!exploration) {{
+        return;
+      }}
+      if (exploration.center_point && exploration.center_point.features && exploration.center_point.features.length) {{
+        map.addSource('exploration-center', {{ type: 'geojson', data: exploration.center_point }});
+        map.addLayer({{
+          id: 'exploration-center',
+          type: 'circle',
+          source: 'exploration-center',
+          paint: {{
+            'circle-color': '#38bdf8',
+            'circle-radius': 10,
+            'circle-opacity': 0.95,
+            'circle-stroke-width': 2.5,
+            'circle-stroke-color': '#f8fafc'
+          }}
+        }});
+        map.addLayer({{
+          id: 'exploration-center-label',
+          type: 'symbol',
+          source: 'exploration-center',
+          layout: {{
+            'text-field': ['get', 'label'],
+            'text-size': 11,
+            'text-offset': [0, 1.35],
+            'text-anchor': 'top',
+            'text-max-width': 8,
+            'text-allow-overlap': true,
+            'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold']
+          }},
+          paint: {{
+            'text-color': '#e0f2fe',
+            'text-halo-color': 'rgba(15,23,42,0.92)',
+            'text-halo-width': 1.4
+          }}
+        }});
+        bindExplorationHover('exploration-center');
+      }}
+      if (exploration.stops && exploration.stops.features && exploration.stops.features.length) {{
+        map.addSource('exploration-stops', {{ type: 'geojson', data: exploration.stops }});
+        map.addLayer({{
+          id: 'exploration-stops',
+          type: 'circle',
+          source: 'exploration-stops',
+          paint: {{
+            'circle-color': '#f59e0b',
+            'circle-radius': 7,
+            'circle-opacity': 0.92,
+            'circle-stroke-width': 1.5,
+            'circle-stroke-color': '#fff7ed'
+          }}
+        }});
+        addExplorationLabels('exploration-stops', 'exploration-stops-labels', '#fde68a', 'rgba(15,23,42,0.9)');
+        bindExplorationHover('exploration-stops');
+      }}
+      if (exploration.pois && exploration.pois.features && exploration.pois.features.length) {{
+        map.addSource('exploration-pois', {{ type: 'geojson', data: exploration.pois }});
+        map.addLayer({{
+          id: 'exploration-pois',
+          type: 'circle',
+          source: 'exploration-pois',
+          paint: {{
+            'circle-color': '#22c55e',
+            'circle-radius': 6,
+            'circle-opacity': 0.9,
+            'circle-stroke-width': 1.5,
+            'circle-stroke-color': '#ecfdf5'
+          }}
+        }});
+        addExplorationLabels('exploration-pois', 'exploration-pois-labels', '#bbf7d0', 'rgba(15,23,42,0.9)');
+        bindExplorationHover('exploration-pois');
+      }}
+      if (view && view.lon != null && view.lat != null && view.zoom != null) {{
+        map.flyTo({{
+          center: [view.lon, view.lat],
+          zoom: view.zoom,
+          duration: 700,
+          essential: true
+        }});
+      }}
+      try {{
+        window.parent.postMessage({{ type: 'cspe-map-exploration-applied' }}, '*');
+      }} catch (error) {{
+        /* standalone preview */
+      }}
+    }};
+
+    const flushQueuedExplorationMessages = () => {{
+      mapExplorationReady = true;
+      applyExplorationOverlay(payload.exploration || null, null);
+      for (const msg of queuedExplorationMessages) {{
+        applyExplorationOverlay(msg.exploration || null, msg.view || null);
+      }}
+      queuedExplorationMessages.length = 0;
+    }};
+
+    window.addEventListener('message', (event) => {{
+      const data = event.data;
+      if (!data || data.type !== 'cspe-map-set-exploration') {{
+        return;
+      }}
+      if (!mapExplorationReady) {{
+        queuedExplorationMessages.push(data);
+        return;
+      }}
+      applyExplorationOverlay(data.exploration || null, data.view || null);
+    }});
 
     map.on('load', () => {{
       if (payload.paris_mask_feature) {{
@@ -2723,6 +3055,8 @@ def render_mapbox_gl_html(
         }}
       }});
 
+      flushQueuedExplorationMessages();
+
       map.on('mouseenter', 'stations', () => {{
         map.getCanvas().style.cursor = 'pointer';
       }});
@@ -2827,6 +3161,12 @@ def render_mapbox_gl_html(
           setClickedPois([]);
         }}
       }});
+
+      try {{
+        window.parent.postMessage({{ type: 'cspe-map-ready' }}, '*');
+      }} catch (error) {{
+        /* standalone preview */
+      }}
     }});
   </script>
 </body>

@@ -29,6 +29,7 @@ export class GraphRenderer {
     private graphRoot: TransformNode | null = null; // Root for all content
     private labelsMap: Map<string, GUI.TextBlock> = new Map();
     private labelsTexture: GUI.AdvancedDynamicTexture | null = null;
+    private uiTexture: GUI.AdvancedDynamicTexture | null = null;
     private tooltip: GUI.TextBlock | null = null;
     private showLabelsState: boolean = false;
 
@@ -48,6 +49,41 @@ export class GraphRenderer {
 
     private isLargeGraph(data: GraphData): boolean {
         return !!data.metadata?.large_graph || data.nodes.length > 5000 || data.edges.length > 10000;
+    }
+
+    private disposeAdvancedTexture(texture: GUI.AdvancedDynamicTexture | null) {
+        if (!texture) return;
+        try {
+            texture.dispose();
+        } catch {
+            /* scene/engine may already be tearing down */
+        }
+    }
+
+    private disposeLabelControls() {
+        this.labelsMap.forEach((label) => {
+            try {
+                label.dispose();
+            } catch {
+                /* ignore */
+            }
+        });
+        this.labelsMap.clear();
+        this.disposeAdvancedTexture(this.labelsTexture);
+        this.labelsTexture = null;
+    }
+
+    private disposeUiTooltip() {
+        if (this.tooltip) {
+            try {
+                this.tooltip.dispose();
+            } catch {
+                /* ignore */
+            }
+            this.tooltip = null;
+        }
+        this.disposeAdvancedTexture(this.uiTexture);
+        this.uiTexture = null;
     }
 
 
@@ -126,7 +162,8 @@ export class GraphRenderer {
         // OPTIMIZATION: Single UI Texture for all tooltips
         // In VR, we skip this to prevent the Fullscreen UI from blocking ray casts
         if (!skip2DUI) {
-            const labelTexture = GUI.AdvancedDynamicTexture.CreateFullscreenUI("UI");
+            this.disposeUiTooltip();
+            this.uiTexture = GUI.AdvancedDynamicTexture.CreateFullscreenUI("UI", true, scene);
             this.tooltip = new GUI.TextBlock();
             this.tooltip.text = "";
             this.tooltip.color = "white";
@@ -134,15 +171,11 @@ export class GraphRenderer {
             this.tooltip.outlineWidth = 2;
             this.tooltip.outlineColor = "black";
             this.tooltip.isVisible = false;
-            labelTexture.addControl(this.tooltip);
+            this.uiTexture.addControl(this.tooltip);
         }
 
         // Reset Persistent Labels map
-        this.labelsMap.clear();
-        if (this.labelsTexture) {
-            this.labelsTexture.dispose();
-            this.labelsTexture = null;
-        }
+        this.disposeLabelControls();
 
         data.nodes.forEach(node => {
             // Create an instance instead of a clone or new mesh
@@ -584,12 +617,7 @@ export class GraphRenderer {
         } else {
             // Hide all labels
             if (!isXR) {
-                this.labelsMap.forEach(label => label.isVisible = false);
-                if (this.labelsTexture) {
-                    this.labelsTexture.dispose();
-                    this.labelsTexture = null;
-                    this.labelsMap.clear();
-                }
+                this.disposeLabelControls();
             } else {
                 // Dispose VR label meshes
                 nodeMeshes.forEach((mesh) => {
@@ -645,19 +673,15 @@ export class GraphRenderer {
 
     disposeGraph(nodeMeshes: Map<string, Mesh | InstancedMesh>, scene: Scene) {
         if (this.vrTooltipTexture) {
-            this.vrTooltipTexture.dispose();
+            this.disposeAdvancedTexture(this.vrTooltipTexture);
             this.vrTooltipTexture = null;
         }
         if (this.vrTooltipMesh) {
             this.vrTooltipMesh.dispose();
             this.vrTooltipMesh = null;
         }
-        if (this.labelsTexture) {
-            this.labelsTexture.dispose();
-            this.labelsTexture = null;
-        }
-        this.labelsMap.clear();
-        this.tooltip = null;
+        this.disposeLabelControls();
+        this.disposeUiTooltip();
         // Clear edge references
         this.edgeInstances = [];
 

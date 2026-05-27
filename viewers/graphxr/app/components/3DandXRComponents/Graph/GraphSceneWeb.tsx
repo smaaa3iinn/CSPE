@@ -133,6 +133,14 @@ const GraphSceneWeb = forwardRef<GraphSceneRef, GraphSceneProps>(({ data, onSele
         setIsSceneReady(true);
     }, []);
 
+    useEffect(() => {
+        return () => {
+            if (scene) {
+                graphRenderer.current.disposeGraph(nodeMeshesRef.current, scene);
+            }
+        };
+    }, [scene]);
+
     // Handle graph data updates
     useEffect(() => {
         if (!scene || !data) return;

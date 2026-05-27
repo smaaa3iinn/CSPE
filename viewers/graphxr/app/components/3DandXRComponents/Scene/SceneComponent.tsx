@@ -75,9 +75,15 @@ export default function SceneComponent({
 
     loaded.current = true;
     return () => {
-      scene.getEngine().dispose();
       if (window) {
         window.removeEventListener("resize", resize);
+      }
+      engine.stopRenderLoop();
+      if (!scene.isDisposed) {
+        scene.dispose();
+      }
+      if (!engine.isDisposed) {
+        engine.dispose();
       }
       loaded.current = false;
     };

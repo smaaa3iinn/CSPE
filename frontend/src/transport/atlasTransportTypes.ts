@@ -6,10 +6,20 @@ export type AtlasTransportRun =
   | "route"
   | "compute"
   | "search_map"
+  | "exploration_map"
   | "reset_route"
   | "refresh_map"
   | "clear_map_highlight"
   | "none";
+
+export type TransportExplorationView = {
+  center?: Record<string, unknown>;
+  radius_m?: number;
+  nearby_stops?: Array<Record<string, unknown>>;
+  nearby_pois?: Array<Record<string, unknown>>;
+  counts?: { stops?: number; pois?: number };
+  summary?: string;
+};
 
 export type AtlasTransportActionSpec = {
   open_app_mode?: "transport";
@@ -25,6 +35,10 @@ export type AtlasTransportActionSpec = {
   from_query?: string;
   to_query?: string;
   stop_lookup_query?: string;
+  selected_station_id?: string;
+  selected_stop_id?: string;
+  /** Changes when exploration results update (same center, new radius/layers). */
+  exploration_revision?: string;
   /** Default `none` at apply time if absent. */
   run?: AtlasTransportRun;
 };
@@ -75,10 +89,14 @@ export function normalizeAtlasTransportSpec(raw: Record<string, unknown>): Atlas
   if (typeof raw.from_query === "string") spec.from_query = raw.from_query;
   if (typeof raw.to_query === "string") spec.to_query = raw.to_query;
   if (typeof raw.stop_lookup_query === "string") spec.stop_lookup_query = raw.stop_lookup_query;
+  if (typeof raw.selected_station_id === "string") spec.selected_station_id = raw.selected_station_id;
+  if (typeof raw.selected_stop_id === "string") spec.selected_stop_id = raw.selected_stop_id;
+  if (typeof raw.exploration_revision === "string") spec.exploration_revision = raw.exploration_revision;
   if (
     raw.run === "route" ||
     raw.run === "compute" ||
     raw.run === "search_map" ||
+    raw.run === "exploration_map" ||
     raw.run === "reset_route" ||
     raw.run === "refresh_map" ||
     raw.run === "clear_map_highlight" ||

@@ -1,0 +1,75 @@
+.atlas-focus-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  z-index: 20;
+  width: min(560px, calc(100% - 32px));
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(15, 20, 30, 0.88);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+  box-sizing: border-box;
+}
+
+.atlas-focus-bar__row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.atlas-focus-bar__input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(8, 12, 20, 0.82);
+  color: rgba(238, 242, 255, 0.96);
+}
+
+.atlas-focus-bar__input:focus {
+  outline: none;
+  border-color: rgba(148, 163, 184, 0.5);
+}
+
+.atlas-focus-bar__input:disabled {
+  opacity: 0.65;
+}
+
+.atlas-focus-bar__send {
+  flex-shrink: 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: linear-gradient(180deg, rgba(100, 116, 139, 0.42), rgba(51, 65, 85, 0.58));
+  color: #f8fafc;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.atlas-focus-bar__send:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.atlas-focus-bar__hint {
+  margin: 8px 0 0;
+  text-align: center;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: rgba(148, 163, 184, 0.75);
+}
+
+.atlas-focus-bar__err {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: #fca5a5;
+}

@@ -34,8 +34,18 @@ def main():
     edges = bundle["edges_clean"]
 
     assert edges, "Derived edge bundle returned no edges."
-    assert any(str(edge.get("mode")) == "metro" for edge in edges), "Metro edges are missing."
-    assert any(str(edge.get("mode")) == "bus" for edge in edges), "Bus edges are missing."
+    assert any(
+        str(edge.get("edge_kind") or "ride") == "ride"
+        and ("metro" in str(edge.get("modes") or edge.get("mode") or ""))
+        for edge in edges
+    ), "Metro ride edges are missing."
+    assert any(
+        str(edge.get("edge_kind") or "ride") == "ride"
+        and ("bus" in str(edge.get("modes") or edge.get("mode") or ""))
+        for edge in edges
+    ), "Bus ride edges are missing."
+    transfer_edges = [edge for edge in edges if str(edge.get("edge_kind") or "") == "transfer"]
+    assert transfer_edges, "Transfer edges are missing from enriched bundle."
 
     for mode, graph in graphs.items():
         assert graph.number_of_nodes() >= 0

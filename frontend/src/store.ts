@@ -8,6 +8,13 @@ export type AppMode = "transport" | "visual" | "memory" | "music";
 
 type ChatTurn = { role: "user" | "assistant"; content: string };
 
+export type TransportMapFocusRequest = {
+  seq: number;
+  stationId?: string | null;
+  stopId?: string | null;
+  label?: string;
+};
+
 type VisualPanel = { title: string; query: string; urls: string[] };
 
 function ingestStructuredOutputs(outputs: StructuredOutput[]) {
@@ -65,8 +72,19 @@ type State = {
   transportStats: { nodes: number; edges: number } | null;
   transportRouteError: string | null;
   transportRouteMeta: string | null;
+  transportRouteLegs: import("./api/client").TransportRouteLeg[] | null;
+  transportExploration: import("./transport/atlasTransportTypes").TransportExplorationView | null;
+  /** Bumped whenever exploration view changes (map refresh trigger). */
+  transportExplorationSeq: number;
+  /** Atlas rail → map: focus a stop/station from nearby-results list */
+  transportMapFocus: TransportMapFocusRequest | null;
+  /** Map / GraphXR shared selection (stop or station highlight). */
+  transportMapSelectionStopId: string | null;
+  transportMapSelectionStationId: string | null;
   atlasTransportAction: AtlasTransportActionPayload | null;
   memoryProjectId: string | null;
+  /** Transport map: hide HUD panels for full-bleed map (toggle with F). */
+  transportMapChromeHidden: boolean;
   setMode: (m: AppMode) => void;
   appendUserMessage: (text: string) => void;
   setChatLoading: (v: boolean) => void;
@@ -83,9 +101,20 @@ type State = {
   setTransportStats: (s: { nodes: number; edges: number } | null) => void;
   setTransportRouteError: (e: string | null) => void;
   setTransportRouteMeta: (e: string | null) => void;
+  setTransportRouteLegs: (legs: import("./api/client").TransportRouteLeg[] | null) => void;
+  setTransportExploration: (
+    v: import("./transport/atlasTransportTypes").TransportExplorationView | null,
+  ) => void;
+  requestTransportMapFocus: (payload: Omit<TransportMapFocusRequest, "seq">) => void;
+  setTransportMapSelection: (payload: {
+    stopId?: string | null;
+    stationId?: string | null;
+  }) => void;
   setAtlasTransportAction: (p: AtlasTransportActionPayload | null) => void;
   setMemoryProjectId: (id: string | null) => void;
   syncAtlasVoiceUi: (outputs: StructuredOutput[]) => void;
+  setTransportMapChromeHidden: (hidden: boolean) => void;
+  toggleTransportMapChromeHidden: () => void;
 };
 
 export const useAppStore = create<State>((set) => ({
@@ -108,8 +137,15 @@ export const useAppStore = create<State>((set) => ({
   transportStats: null,
   transportRouteError: null,
   transportRouteMeta: null,
+  transportRouteLegs: null,
+  transportExploration: null,
+  transportExplorationSeq: 0,
+  transportMapFocus: null,
+  transportMapSelectionStopId: null,
+  transportMapSelectionStationId: null,
   atlasTransportAction: null,
   memoryProjectId: null,
+  transportMapChromeHidden: false,
 
   setMode: (m) => set({ mode: m }),
   appendUserMessage: (text) =>
@@ -147,6 +183,28 @@ export const useAppStore = create<State>((set) => ({
   setTransportStats: (st) => set({ transportStats: st }),
   setTransportRouteError: (e) => set({ transportRouteError: e }),
   setTransportRouteMeta: (e) => set({ transportRouteMeta: e }),
+  setTransportRouteLegs: (legs) => set({ transportRouteLegs: legs }),
+  setTransportExploration: (v) =>
+    set((s) => ({
+      transportExploration: v,
+      transportExplorationSeq: s.transportExplorationSeq + 1,
+    })),
+  requestTransportMapFocus: (payload) =>
+    set((s) => ({
+      transportMapFocus: {
+        seq: (s.transportMapFocus?.seq ?? 0) + 1,
+        stationId: payload.stationId ?? null,
+        stopId: payload.stopId ?? null,
+        label: payload.label,
+      },
+    })),
+  setTransportMapSelection: (payload) =>
+    set((s) => ({
+      transportMapSelectionStopId:
+        payload.stopId !== undefined ? payload.stopId : s.transportMapSelectionStopId,
+      transportMapSelectionStationId:
+        payload.stationId !== undefined ? payload.stationId : s.transportMapSelectionStationId,
+    })),
   setAtlasTransportAction: (p) => set({ atlasTransportAction: p }),
   setMemoryProjectId: (id) => set({ memoryProjectId: id }),
   syncAtlasVoiceUi: (outputs) =>
@@ -159,4 +217,7 @@ export const useAppStore = create<State>((set) => ({
         visualPanels: panels.length ? panels : s.visualPanels,
       };
     }),
+  setTransportMapChromeHidden: (hidden) => set({ transportMapChromeHidden: hidden }),
+  toggleTransportMapChromeHidden: () =>
+    set((s) => ({ transportMapChromeHidden: !s.transportMapChromeHidden })),
 }));

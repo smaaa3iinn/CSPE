@@ -33,11 +33,21 @@ class TransportMapRequest(BaseModel):
     # Stop graph vs station overlay vs both (routing always uses underlying stop graph)
     graph_viz_mode: Literal["stop", "station", "hybrid"] = "stop"
     expanded_station_id: str | None = None
+    exploration_overlay: dict[str, Any] | None = None
 
 
 class TransportMapResponse(BaseModel):
     html: str
     mapbox_token_source: str | None = None
+
+
+class TransportExplorationOverlayRequest(BaseModel):
+    exploration_overlay: dict[str, Any] | None = None
+
+
+class TransportExplorationOverlayResponse(BaseModel):
+    exploration: dict[str, Any]
+    view: dict[str, float] | None = None
 
 
 class TransportRouteRequest(BaseModel):
@@ -57,6 +67,8 @@ class TransportRouteResponse(BaseModel):
     path: list[str] | None = None
     station_path: list[str] | None = None
     station_names: list[str] | None = None
+    path_legs: list[dict[str, Any]] | None = None
+    path_summary: list[str] | None = None
     result: dict[str, Any] | None = None
     detail: dict[str, Any] | None = None
     error: dict[str, Any] | None = None
@@ -68,6 +80,8 @@ class TransportGraph3DSessionRequest(BaseModel):
     graph_viz_mode: Literal["stop", "station", "hybrid"] = "stop"
     path_stop_ids: list[str] | None = None
     path_station_ids: list[str] | None = None
+    selected_stop_id: str | None = None
+    selected_station_id: str | None = None
 
 
 class TransportGraph3DSessionResponse(BaseModel):
@@ -75,6 +89,23 @@ class TransportGraph3DSessionResponse(BaseModel):
     graph_url: str
     expires_in_s: int
     metadata: dict[str, Any]
+
+
+class TransportGraph3DSyncRequest(TransportGraph3DSessionRequest):
+    client_id: str = Field(..., min_length=8, max_length=128)
+    fingerprint: str = Field(..., min_length=1, max_length=1024)
+
+
+class TransportGraph3DSyncPushResponse(BaseModel):
+    session_id: str
+    fingerprint: str
+    expires_in_s: int
+
+
+class TransportGraph3DSyncPeekResponse(BaseModel):
+    changed: bool
+    session_id: str | None = None
+    fingerprint: str | None = None
 
 
 class TransportStatsResponse(BaseModel):
@@ -163,3 +194,18 @@ class AgentTransportRouteResponse(BaseModel):
     result: dict[str, Any]
     graph3d: dict[str, Any] | None = None
     shell_queued: int = 0
+
+
+class TransportExploreAreaRequest(BaseModel):
+    query: str = Field(..., min_length=0)
+    radius_m: int | None = Field(default=None, ge=50, le=3000)
+    include_stops: bool = True
+    include_pois: bool = True
+    poi_categories: list[str] = Field(default_factory=lambda: ["all"])
+    transport_modes: list[str] = Field(default_factory=lambda: ["all"])
+    limit_stops: int = Field(default=15, ge=1, le=50)
+    limit_pois: int = Field(default=20, ge=1, le=60)
+    mode: Literal["all", "metro", "rail", "tram", "bus", "other"] = "metro"
+    use_lcc: bool = False
+    station_first: bool = True
+    sync_ui: bool = True

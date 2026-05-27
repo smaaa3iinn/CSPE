@@ -43,6 +43,8 @@ def enqueue_commands(commands: list[dict[str, Any]]) -> int:
                     ui_log.log_atlas_transport_intent_enqueued(cc)
                 elif k == "atlas_transport_action":
                     ui_log.log_atlas_transport_action_enqueued(cc)
+                elif k == "transport_exploration_view":
+                    ui_log.log_exploration_shell_enqueue(cc)
         subs = list(_sse_subscribers)
     if batch and subs:
         payload = json.dumps({"commands": batch}, default=str)

@@ -62,6 +62,24 @@ export async function postTransportMap(body: Record<string, unknown>): Promise<{
   return r.json();
 }
 
+export async function postTransportExplorationOverlay(body: {
+  exploration_overlay: Record<string, unknown> | null;
+}): Promise<{
+  exploration: Record<string, unknown>;
+  view: { lat: number; lon: number; zoom: number } | null;
+}> {
+  const r = await fetch(apiUrl("/api/transport/map/exploration-overlay"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(t || `exploration overlay ${r.status}`);
+  }
+  return r.json();
+}
+
 export async function postTransportGraph3DSession(body: Record<string, unknown>): Promise<{
   session_id: string;
   graph_url: string;
@@ -76,6 +94,42 @@ export async function postTransportGraph3DSession(body: Record<string, unknown>)
   if (!r.ok) {
     const t = await r.text();
     throw new Error(t || `graph3d session ${r.status}`);
+  }
+  return r.json();
+}
+
+export async function postTransportGraph3DSync(body: Record<string, unknown>): Promise<{
+  session_id: string;
+  fingerprint: string;
+  expires_in_s: number;
+}> {
+  const r = await fetch(apiUrl("/api/transport/graph3d/sync"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(t || `graph3d sync ${r.status}`);
+  }
+  return r.json();
+}
+
+export async function getTransportGraph3DSync(
+  clientId: string,
+  fingerprint?: string | null,
+): Promise<{
+  changed: boolean;
+  session_id?: string | null;
+  fingerprint?: string | null;
+}> {
+  const q = new URLSearchParams();
+  if (fingerprint) q.set("fingerprint", fingerprint);
+  const suffix = q.toString() ? `?${q.toString()}` : "";
+  const r = await fetch(apiUrl(`/api/transport/graph3d/sync/${encodeURIComponent(clientId)}${suffix}`));
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(t || `graph3d sync peek ${r.status}`);
   }
   return r.json();
 }
@@ -142,11 +196,29 @@ export async function postRoute(
     path: string[] | null;
     station_path?: string[] | null;
     station_names?: string[] | null;
+    path_legs?: TransportRouteLeg[] | null;
+    path_summary?: string[] | null;
     result: { distance_m?: number; time_s?: number; transfers?: number } | null;
     detail?: { entry_stop_id?: string | null; exit_stop_id?: string | null } | null;
     error: { message: string; details?: string[] } | null;
   }>;
 }
+
+export type TransportRouteLeg = {
+  kind: "ride" | "transfer";
+  mode: string;
+  line_label: string;
+  color: string;
+  summary: string;
+  stops: {
+    stop_id: string;
+    stop_name: string;
+    station_id?: string | null;
+    station_name?: string | null;
+  }[];
+  distance_m?: number | null;
+  time_s?: number | null;
+};
 
 /** Structured logs for Atlas-driven transport (see logs/activity.log on the API host). */
 export async function postShellClientLog(event: string, data: Record<string, unknown>): Promise<void> {

@@ -2,10 +2,15 @@ import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import type { StructuredOutput } from "../types/payloads";
 import { postAgentEvent } from "../api/agentFeedback";
+import { postShellClientLog } from "../api/client";
 import { apiUrl } from "../api/config";
 import { useAppStore } from "../store";
-import type { AtlasTransportActionSpec } from "../transport/atlasTransportTypes";
+import type { AtlasTransportActionSpec, TransportExplorationView } from "../transport/atlasTransportTypes";
 import { normalizeAtlasTransportSpec, transportActionSpecFingerprint } from "../transport/atlasTransportTypes";
+import {
+  enableGraph3dLiveSync,
+  registerGraph3dSyncClientId,
+} from "../transport/graph3dSync";
 
 const POLL_MS = 600;
 const USE_SHELL_SSE = import.meta.env.VITE_SHELL_SSE === "1";
@@ -14,7 +19,10 @@ function enqueueAtlasTransportAction(spec: AtlasTransportActionSpec) {
   const s = useAppStore.getState();
   const fp = transportActionSpecFingerprint(spec);
   const pending = s.atlasTransportAction;
-  if (pending && transportActionSpecFingerprint(pending.spec) === fp) return;
+  // Same center can repeat across follow-up explore turns (stops → POIs → filter).
+  if (pending && transportActionSpecFingerprint(pending.spec) === fp && spec.run !== "exploration_map") {
+    return;
+  }
   const nextSeq = (pending?.seq ?? 0) + 1;
   // eslint-disable-next-line no-console
   console.info("[atlas_transport] action enqueued", { seq: nextSeq, spec });
@@ -52,6 +60,48 @@ function applyOne(raw: Record<string, unknown>, navigate: ReturnType<typeof useN
       const gv = raw.graph_viz;
       if (gv === "stop" || gv === "station" || gv === "hybrid") s.setTransportGraphViz(gv);
       if (typeof raw.show_transfers === "boolean") s.setTransportShowTransfers(raw.show_transfers);
+      break;
+    }
+    case "transport_exploration_view": {
+      useAppStore.getState().setMode("transport");
+      const center = raw.center;
+      const view: TransportExplorationView = {
+        center: center && typeof center === "object" && !Array.isArray(center)
+          ? (center as Record<string, unknown>)
+          : undefined,
+        radius_m: typeof raw.radius_m === "number" ? raw.radius_m : undefined,
+        counts:
+          raw.counts && typeof raw.counts === "object" && !Array.isArray(raw.counts)
+            ? (raw.counts as TransportExplorationView["counts"])
+            : undefined,
+        summary: typeof raw.summary === "string" ? raw.summary : undefined,
+        nearby_stops: Array.isArray(raw.nearby_stops)
+          ? (raw.nearby_stops as Array<Record<string, unknown>>)
+          : [],
+        nearby_pois: Array.isArray(raw.nearby_pois)
+          ? (raw.nearby_pois as Array<Record<string, unknown>>)
+          : [],
+      };
+      useAppStore.getState().setTransportExploration(view);
+      void postShellClientLog("exploration_view_applied", {
+        stop_count: view.nearby_stops?.length ?? 0,
+        poi_count: view.nearby_pois?.length ?? 0,
+        radius_m: view.radius_m ?? null,
+        exploration_seq: useAppStore.getState().transportExplorationSeq,
+        summary_len: view.summary?.length ?? 0,
+      });
+      break;
+    }
+    case "transport_graph3d_sync": {
+      const s = useAppStore.getState();
+      s.setMode("transport");
+      s.setTransportViz("network_3d");
+      if (typeof raw.sync_client_id === "string" && raw.sync_client_id.trim()) {
+        registerGraph3dSyncClientId(raw.sync_client_id);
+      }
+      if (raw.enabled !== false) {
+        enableGraph3dLiveSync();
+      }
       break;
     }
     case "transport_route_view": {

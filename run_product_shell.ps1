@@ -13,7 +13,8 @@ if (-not (Test-Path -LiteralPath $logDir)) {
 }
 $healthLog = Join-Path $logDir "health.log"
 $activityLog = Join-Path $logDir "activity.log"
-foreach ($f in @($healthLog, $activityLog)) {
+$compactLog = Join-Path $logDir "activity_compact.log"
+foreach ($f in @($healthLog, $activityLog, $compactLog)) {
     try {
         if (-not (Test-Path -LiteralPath $f)) {
             New-Item -ItemType File -Path $f -Force | Out-Null
@@ -29,8 +30,11 @@ foreach ($f in @($healthLog, $activityLog)) {
 $env:CSPE_LOG_DIR = $logDir
 $env:CSPE_HEALTH_LOG = $healthLog
 $env:CSPE_ACTIVITY_LOG = $activityLog
+$env:CSPE_COMPACT_LOG = $compactLog
+if (-not $env:CSPE_LOG_MODE) { $env:CSPE_LOG_MODE = "compact" }
 $env:CSPE_LOG_RESET = "0"
 
 Write-Host 'Listening on 0.0.0.0:8787 — LAN clients may use http://<this-PC-IPv4>:8787 when VITE_API_BASE is set.'
 Write-Host ('Logs: health=' + $healthLog + '  activity=' + $activityLog)
-& .\.venv\Scripts\python.exe -m uvicorn backend.product_shell.main:app --reload --host 0.0.0.0 --port 8787
+& (Join-Path $PSScriptRoot 'stop_product_shell.ps1')
+& .\.venv\Scripts\python.exe -m uvicorn backend.product_shell.main:app --host 0.0.0.0 --port 8787

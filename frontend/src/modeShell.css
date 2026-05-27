@@ -1,4 +1,4 @@
-/* App chrome: top bar + tool rail + main */
+/* App chrome: tool rail + main */
 .app-root {
   display: flex;
   flex-direction: column;
@@ -6,34 +6,20 @@
   overflow: hidden;
 }
 
-.app-topbar {
-  flex-shrink: 0;
-  height: 44px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 14px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-elevated);
-}
-
-.app-topbar__icon {
-  font-size: 18px;
-  color: var(--accent);
-}
-
-.app-topbar__title {
-  font-weight: 600;
-  font-size: 15px;
-  letter-spacing: -0.02em;
-  color: var(--text);
-}
-
 .app-root__body {
   flex: 1;
   min-height: 0;
   display: flex;
   overflow: hidden;
+}
+
+.app-root--map-focus .app-root__body > nav {
+  display: none;
+}
+
+.app-root--map-focus .app-shell__main {
+  --transport-br-right: 14px;
+  --transport-br-w: 0px;
 }
 
 /* Shared full-bleed mode layout + floating right panel (same max width as transport top-left card) */

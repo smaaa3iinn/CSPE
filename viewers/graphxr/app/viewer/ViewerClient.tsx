@@ -12,19 +12,29 @@ import type { GraphProject } from '@/app/services/graphService';
 
 type SelectionType = 'node' | 'edge' | null;
 
+const SYNC_POLL_MS = 900;
+
 function normalizeApiBase(value: string | null): string {
   return (value || '').replace(/\/$/, '');
 }
 
+function readViewFingerprint(project: GraphProject | null): string | null {
+  const fp = project?.metadata?.view_fingerprint;
+  return typeof fp === 'string' && fp.trim() ? fp : null;
+}
+
 export default function ViewerClient() {
   const searchParams = useSearchParams();
-  const session = searchParams.get('session');
+  const initialSession = searchParams.get('session');
+  const syncClientId = searchParams.get('sync');
   const apiBase = normalizeApiBase(searchParams.get('api'));
   const embedded = searchParams.get('embedded') === '1';
 
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(initialSession);
   const [project, setProject] = useState<GraphProject | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [selectionType, setSelectionType] = useState<SelectionType>(null);
   const [visibleNodeIds, setVisibleNodeIds] = useState<Set<string> | null>(null);
@@ -35,13 +45,14 @@ export default function ViewerClient() {
   const [showLabels, setShowLabels] = useState(false);
 
   const graphSceneRef = useRef<GraphSceneRef>(null);
+  const knownFingerprintRef = useRef<string | null>(null);
   const edgeList = useMemo(() => project?.graph_data?.edges || project?.graph_data?.links || [], [project]);
 
   useEffect(() => {
     let cancelled = false;
 
-    async function loadSession() {
-      if (!session) {
+    async function loadSession(sessionId: string | null, background: boolean) {
+      if (!sessionId) {
         setError('Missing CSPE graph session id.');
         setLoading(false);
         return;
@@ -52,11 +63,15 @@ export default function ViewerClient() {
         return;
       }
 
-      setLoading(true);
+      if (background) {
+        setSyncing(true);
+      } else {
+        setLoading(true);
+      }
       setError(null);
       try {
         const response = await fetch(
-          `${apiBase}/api/transport/graph3d/session/${encodeURIComponent(session)}`
+          `${apiBase}/api/transport/graph3d/session/${encodeURIComponent(sessionId)}`
         );
         if (!response.ok) {
           const message = await response.text();
@@ -65,23 +80,82 @@ export default function ViewerClient() {
         const loadedProject = (await response.json()) as GraphProject;
         if (!cancelled) {
           setProject(loadedProject);
+          knownFingerprintRef.current = readViewFingerprint(loadedProject);
+          setSelectedItem(null);
+          setSelectionType(null);
         }
       } catch (err) {
-        if (!cancelled) {
+        if (!cancelled && !background) {
           setError(err instanceof Error ? err.message : 'Unable to load CSPE graph session.');
         }
       } finally {
         if (!cancelled) {
-          setLoading(false);
+          if (background) {
+            setSyncing(false);
+          } else {
+            setLoading(false);
+          }
         }
       }
     }
 
-    void loadSession();
+    const background = project !== null;
+    void loadSession(activeSessionId, background);
     return () => {
       cancelled = true;
     };
-  }, [apiBase, session]);
+  }, [activeSessionId, apiBase]);
+
+  useEffect(() => {
+    if (!syncClientId || !apiBase) {
+      return;
+    }
+
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const q = knownFingerprintRef.current
+          ? `?fingerprint=${encodeURIComponent(knownFingerprintRef.current)}`
+          : '';
+        const response = await fetch(
+          `${apiBase}/api/transport/graph3d/sync/${encodeURIComponent(syncClientId)}${q}`
+        );
+        if (!response.ok || cancelled) {
+          return;
+        }
+        const data = (await response.json()) as {
+          changed?: boolean;
+          session_id?: string | null;
+          fingerprint?: string | null;
+        };
+        if (!data.changed || !data.session_id || cancelled) {
+          if (typeof data.fingerprint === 'string' && data.fingerprint) {
+            knownFingerprintRef.current = data.fingerprint;
+          }
+          return;
+        }
+        if (data.session_id === activeSessionId) {
+          if (typeof data.fingerprint === 'string' && data.fingerprint) {
+            knownFingerprintRef.current = data.fingerprint;
+          }
+          return;
+        }
+        if (typeof data.fingerprint === 'string' && data.fingerprint) {
+          knownFingerprintRef.current = data.fingerprint;
+        }
+        setActiveSessionId(data.session_id);
+      } catch {
+        /* offline or API down */
+      }
+    };
+
+    void poll();
+    const id = window.setInterval(() => void poll(), SYNC_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [syncClientId, apiBase, activeSessionId]);
 
   const handleResetCamera = useCallback(() => {
     graphSceneRef.current?.resetCamera();
@@ -112,6 +186,12 @@ export default function ViewerClient() {
 
   return (
     <div className="relative h-screen w-full overflow-hidden bg-black">
+      {syncing && (
+        <div className="pointer-events-none absolute left-1/2 top-4 z-30 -translate-x-1/2 rounded-full border border-white/10 bg-black/60 px-4 py-1 text-xs text-white/80 backdrop-blur-md">
+          Syncing transport view…
+        </div>
+      )}
+
       {isInXR && (
         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-gradient-to-br from-surface-950 via-surface-900 to-surface-950">
           <div className="text-center">
@@ -166,14 +246,15 @@ export default function ViewerClient() {
         )}
       </div>
 
-      <div className={`absolute top-4 z-20 rounded-2xl border border-white/10 bg-black/50 p-4 text-white backdrop-blur-xl ${embedded ? 'right-4' : 'left-4'}`}>
-        <div className="text-sm text-surface-400">CSPE transport graph</div>
-        <div className="max-w-xs truncate text-lg font-semibold">{project.name}</div>
-        <div className="mt-2 text-xs text-surface-400">
-          {project.graph_data.nodes?.length || 0} nodes · {edgeList.length} edges
-          {project.metadata?.route_node_count ? ` · ${project.metadata.route_node_count} route nodes` : ''}
-        </div>
-        {!embedded && (
+      {!embedded && (
+        <div className="absolute left-4 top-4 z-20 rounded-2xl border border-white/10 bg-black/50 p-4 text-white backdrop-blur-xl">
+          <div className="text-sm text-surface-400">CSPE transport graph</div>
+          <div className="max-w-xs truncate text-lg font-semibold">{project.name}</div>
+          <div className="mt-2 text-xs text-surface-400">
+            {project.graph_data.nodes?.length || 0} nodes · {edgeList.length} edges
+            {project.metadata?.route_node_count ? ` · ${project.metadata.route_node_count} route nodes` : ''}
+            {syncClientId ? ' · live sync' : ''}
+          </div>
           <button
             onClick={() => window.close()}
             className="mt-3 inline-flex items-center gap-2 rounded-lg bg-white/10 px-3 py-2 text-sm text-white hover:bg-white/20"
@@ -181,8 +262,8 @@ export default function ViewerClient() {
             <RotateCcw className="h-4 w-4" />
             Back to CSPE
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {selectedItem && (
         <DetailsPanel

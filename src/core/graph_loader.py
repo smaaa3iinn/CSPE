@@ -45,6 +45,7 @@ class GTFSData:
     routes: pd.DataFrame
     trips: pd.DataFrame
     stop_times: pd.DataFrame
+    transfers: pd.DataFrame | None = None
 
 
 def load_gtfs(gtfs_dir: str | Path) -> GTFSData:
@@ -95,7 +96,25 @@ def load_gtfs(gtfs_dir: str | Path) -> GTFSData:
         },
     )
 
-    return GTFSData(stops=stops, routes=routes, trips=trips, stop_times=stop_times)
+    transfers = None
+    transfers_path = gtfs_dir / "transfers.txt"
+    if transfers_path.is_file():
+        transfer_cols = pd.read_csv(transfers_path, nrows=0).columns.tolist()
+        wanted_transfer_cols = ["from_stop_id", "to_stop_id", "transfer_type", "min_transfer_time"]
+        use_transfer_cols = [col for col in wanted_transfer_cols if col in transfer_cols]
+        transfer_dtypes = {
+            "from_stop_id": "string",
+            "to_stop_id": "string",
+            "transfer_type": "Int16",
+            "min_transfer_time": "Int32",
+        }
+        transfers = pd.read_csv(
+            transfers_path,
+            usecols=use_transfer_cols,
+            dtype={k: v for k, v in transfer_dtypes.items() if k in use_transfer_cols},
+        )
+
+    return GTFSData(stops=stops, routes=routes, trips=trips, stop_times=stop_times, transfers=transfers)
 
 
 def build_pos_all(stops: pd.DataFrame) -> pd.DataFrame:
@@ -127,6 +146,16 @@ def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 def _empty_edges_df() -> pd.DataFrame:
     return pd.DataFrame(columns=EDGE_COLUMNS)
+
+
+def _edge_pair_key(a: str, b: str) -> tuple[str, str]:
+    return tuple(sorted((str(a), str(b))))
+
+
+def _edge_pairs_from_frame(edges_df: pd.DataFrame | None) -> set[tuple[str, str]]:
+    if edges_df is None or edges_df.empty:
+        return set()
+    return {_edge_pair_key(row.a, row.b) for row in edges_df[["a", "b"]].itertuples(index=False)}
 
 
 from src.core.text_normalize import normalize_search_text as _normalize_stop_name
@@ -317,10 +346,98 @@ def build_ride_edges(data: GTFSData, pos_all: pd.DataFrame | None = None) -> pd.
     return agg[EDGE_COLUMNS].reset_index(drop=True)
 
 
+def build_gtfs_transfer_edges(
+    data: GTFSData,
+    pos_all: pd.DataFrame | None = None,
+    ride_edges: pd.DataFrame | None = None,
+    walking_speed_m_s: float = DEFAULT_WALKING_SPEED_M_S,
+) -> pd.DataFrame:
+    transfers = data.transfers
+    if transfers is None or transfers.empty:
+        return _empty_edges_df()
+
+    if pos_all is None:
+        pos_all = build_pos_all(data.stops)
+    coords = _distance_lookup(pos_all)
+    if not coords:
+        return _empty_edges_df()
+
+    ride_nodes = set()
+    blocked_pairs = _edge_pairs_from_frame(ride_edges)
+    if ride_edges is not None and not ride_edges.empty:
+        for row in ride_edges[["a", "b"]].itertuples(index=False):
+            ride_nodes.add(str(row.a))
+            ride_nodes.add(str(row.b))
+
+    df = transfers.copy()
+    df["from_stop_id"] = df["from_stop_id"].astype(str)
+    df["to_stop_id"] = df["to_stop_id"].astype(str)
+    if "transfer_type" not in df.columns:
+        df["transfer_type"] = 2
+    if "min_transfer_time" not in df.columns:
+        df["min_transfer_time"] = 0
+    df["transfer_type"] = pd.to_numeric(df["transfer_type"], errors="coerce").fillna(2).astype(int)
+    df["min_transfer_time"] = pd.to_numeric(df["min_transfer_time"], errors="coerce").fillna(0).astype(float)
+    df = df[df["transfer_type"] != 3]
+    df = df[df["from_stop_id"] != df["to_stop_id"]]
+
+    best_by_pair: dict[tuple[str, str], float] = {}
+    for row in df.itertuples(index=False):
+        a = str(row.from_stop_id)
+        b = str(row.to_stop_id)
+        if a not in coords or b not in coords:
+            continue
+        if ride_nodes and (a not in ride_nodes or b not in ride_nodes):
+            continue
+        pair = _edge_pair_key(a, b)
+        if pair in blocked_pairs:
+            continue
+        min_time = float(getattr(row, "min_transfer_time", 0) or 0)
+        prev = best_by_pair.get(pair)
+        if prev is None or min_time < prev:
+            best_by_pair[pair] = min_time
+
+    if not best_by_pair:
+        return _empty_edges_df()
+
+    transfer_rows: list[dict[str, float | str]] = []
+    for (a, b), min_transfer_time in best_by_pair.items():
+        a_coords = coords[a]
+        b_coords = coords[b]
+        distance_m = _haversine_m(a_coords[0], a_coords[1], b_coords[0], b_coords[1])
+        walk_time_s = _estimate_transfer_time(distance_m, walking_speed_m_s)
+        if min_transfer_time > 0:
+            time_s = float(min_transfer_time)
+        elif not pd.isna(walk_time_s):
+            time_s = float(walk_time_s)
+        else:
+            time_s = float("nan")
+        transfer_rows.append(
+            {
+                "a": a,
+                "b": b,
+                "edge_kind": "transfer",
+                "mode": "transfer",
+                "modes": "transfer",
+                "route_ids": [],
+                "route_labels": [],
+                "route_refs": [],
+                "distance_m": float(distance_m),
+                "time_s": time_s,
+                "cost": time_s,
+                "weight_m": float(distance_m),
+            }
+        )
+
+    transfer_edges = pd.DataFrame(transfer_rows, columns=EDGE_COLUMNS)
+    return transfer_edges.sort_values(["a", "b"]).reset_index(drop=True)
+
+
 def build_transfer_edges(
     data: GTFSData,
     pos_all: pd.DataFrame | None = None,
     ride_edges: pd.DataFrame | None = None,
+    existing_pairs: set[tuple[str, str]] | None = None,
     same_name_transfer_m: float = DEFAULT_SAME_NAME_TRANSFER_M,
     nearby_transfer_m: float = DEFAULT_NEARBY_TRANSFER_M,
     walking_speed_m_s: float = DEFAULT_WALKING_SPEED_M_S,
@@ -336,12 +453,8 @@ def build_transfer_edges(
     stops["stop_name"] = stops["stop_name"].astype(str)
     stops["normalized_name"] = stops["stop_name"].map(_normalize_stop_name)
 
-    ride_pairs = set()
-    if ride_edges is not None and not ride_edges.empty:
-        ride_pairs = {
-            tuple(sorted((str(row.a), str(row.b))))
-            for row in ride_edges[["a", "b"]].itertuples(index=False)
-        }
+    blocked_pairs = set(existing_pairs or set())
+    blocked_pairs.update(_edge_pairs_from_frame(ride_edges))
 
     seen_pairs: set[tuple[str, str]] = set()
     transfer_rows: list[dict[str, float | str]] = []
@@ -351,7 +464,7 @@ def build_transfer_edges(
         if u == v:
             return
         pair = (u, v)
-        if pair in ride_pairs or pair in seen_pairs:
+        if pair in blocked_pairs or pair in seen_pairs:
             return
         seen_pairs.add(pair)
 
@@ -410,8 +523,8 @@ def build_transfer_edges(
     return transfer_edges
 
 
-def combine_edges(ride_edges: pd.DataFrame, transfer_edges: pd.DataFrame) -> pd.DataFrame:
-    parts = [df[EDGE_COLUMNS].copy() for df in (ride_edges, transfer_edges) if df is not None and not df.empty]
+def combine_edges(*edge_frames: pd.DataFrame | None) -> pd.DataFrame:
+    parts = [df[EDGE_COLUMNS].copy() for df in edge_frames if df is not None and not df.empty]
     if not parts:
         return _empty_edges_df()
     combined = pd.concat(parts, ignore_index=True)
@@ -420,9 +533,34 @@ def combine_edges(ride_edges: pd.DataFrame, transfer_edges: pd.DataFrame) -> pd.
     return combined.sort_values(["edge_kind", "a", "b"]).reset_index(drop=True)
 
 
+def edges_dataframe_to_records(edges: pd.DataFrame) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    for row in edges.itertuples(index=False):
+        records.append(
+            {
+                "a": str(row.a),
+                "b": str(row.b),
+                "edge_kind": str(row.edge_kind),
+                "mode": str(row.mode),
+                "modes": str(row.modes),
+                "route_ids": list(row.route_ids),
+                "route_labels": list(row.route_labels),
+                "route_refs": [dict(ref) for ref in row.route_refs],
+                "distance_m": _safe_float(row.distance_m),
+                "time_s": _safe_float(row.time_s),
+                "cost": _safe_float(row.cost),
+                "weight_m": _safe_float(row.weight_m),
+            }
+        )
+    return records
+
+
 def build_edges_enriched(
     data: GTFSData,
     pos_all: pd.DataFrame | None = None,
+    *,
+    use_gtfs_transfers: bool = True,
+    use_inferred_transfers: bool = True,
     same_name_transfer_m: float = DEFAULT_SAME_NAME_TRANSFER_M,
     nearby_transfer_m: float = DEFAULT_NEARBY_TRANSFER_M,
     walking_speed_m_s: float = DEFAULT_WALKING_SPEED_M_S,
@@ -433,16 +571,33 @@ def build_edges_enriched(
         pos_all = build_pos_all(data.stops)
 
     ride_edges = build_ride_edges(data, pos_all=pos_all)
-    transfer_edges = build_transfer_edges(
-        data,
-        pos_all=pos_all,
-        ride_edges=ride_edges,
-        same_name_transfer_m=same_name_transfer_m,
-        nearby_transfer_m=nearby_transfer_m,
-        walking_speed_m_s=walking_speed_m_s,
-        transfer_penalty_s=transfer_penalty_s,
+    gtfs_transfer_edges = (
+        build_gtfs_transfer_edges(
+            data,
+            pos_all=pos_all,
+            ride_edges=ride_edges,
+            walking_speed_m_s=walking_speed_m_s,
+        )
+        if use_gtfs_transfers
+        else _empty_edges_df()
     )
-    return combine_edges(ride_edges, transfer_edges)
+    blocked_pairs = _edge_pairs_from_frame(ride_edges)
+    blocked_pairs.update(_edge_pairs_from_frame(gtfs_transfer_edges))
+    inferred_transfer_edges = (
+        build_transfer_edges(
+            data,
+            pos_all=pos_all,
+            ride_edges=ride_edges,
+            existing_pairs=blocked_pairs,
+            same_name_transfer_m=same_name_transfer_m,
+            nearby_transfer_m=nearby_transfer_m,
+            walking_speed_m_s=walking_speed_m_s,
+            transfer_penalty_s=transfer_penalty_s,
+        )
+        if use_inferred_transfers
+        else _empty_edges_df()
+    )
+    return combine_edges(ride_edges, gtfs_transfer_edges, inferred_transfer_edges)
 
 
 def build_edges_clean(data: GTFSData, pos_all: pd.DataFrame | None = None, compute_weights: bool = False) -> pd.DataFrame:
