@@ -8,9 +8,14 @@ import {
   searchStops,
   type TransportSearchMatch,
 } from "../api/client";
+import { postAgentEvent } from "../api/agentFeedback";
 import { getExternalApiBase, getGraphXRViewerBase } from "../api/config";
 import { useAppStore } from "../store";
 import { lineSuffix, resolveEndpointFromMatches } from "../transport/atlasTransportResolve";
+import {
+  markTransportActionProcessed,
+  wasTransportActionProcessed,
+} from "../transport/atlasTransportDedupe";
 import type { AtlasTransportActionSpec } from "../transport/atlasTransportTypes";
 import { specKeysProvided } from "../transport/atlasTransportTypes";
 import "./transport.css";
@@ -62,6 +67,16 @@ export function TransportMode() {
   const [graph3dErr, setGraph3dErr] = useState<string | null>(null);
   const [launchingGraph3d, setLaunchingGraph3d] = useState(false);
   const graph3dSessionCache = useRef<Map<string, string>>(new Map());
+  /** Suppress route autocomplete while an Atlas `run: route` action is in flight. */
+  const atlasRouteProcessingRef = useRef(false);
+  const localUiRef = useRef({
+    dockTab: "route" as "route" | "search",
+    routeFocus: "start" as "start" | "end",
+    qStart: "",
+    qEnd: "",
+    stopLookupQ: "",
+  });
+  localUiRef.current = { dockTab, routeFocus, qStart, qEnd, stopLookupQ };
 
   const stationFirst = graphViz === "station";
 
@@ -163,6 +178,7 @@ export function TransportMode() {
   useEffect(() => {
     const t = window.setTimeout(() => {
       void (async () => {
+        if (atlasRouteProcessingRef.current) return;
         const q = autocompleteQ.trim();
         if (q.length < 2) {
           setSuggestions([]);
@@ -218,6 +234,11 @@ export function TransportMode() {
     },
     [setPathIds, setStationPathIds, setRouteErr, setRouteMeta]
   );
+
+  const applyRouteResultRef = useRef(applyRouteResult);
+  applyRouteResultRef.current = applyRouteResult;
+  const refreshMapRef = useRef(refreshMap);
+  refreshMapRef.current = refreshMap;
 
   async function computeRoute() {
     setRouteErr(null);
@@ -314,7 +335,12 @@ export function TransportMode() {
     const action = atlasTransportAction;
     if (!action) return;
     const { seq: mySeq, spec } = action;
+    if (wasTransportActionProcessed(mySeq)) return;
+    markTransportActionProcessed(mySeq);
+    setAtlasTransportAction(null);
+
     let cancelled = false;
+    const uiSnap = localUiRef.current;
 
     const keys = specKeysProvided(spec);
     const zBefore = useAppStore.getState();
@@ -326,19 +352,19 @@ export function TransportMode() {
       transportGraphViz: zBefore.transportGraphViz,
       transportShowTransfers: zBefore.transportShowTransfers,
       local: {
-        dockTab,
-        routeFocus,
-        qStart,
-        qEnd,
-        stopLookupQ,
+        dockTab: uiSnap.dockTab,
+        routeFocus: uiSnap.routeFocus,
+        qStart: uiSnap.qStart,
+        qEnd: uiSnap.qEnd,
+        stopLookupQ: uiSnap.stopLookupQ,
       },
     };
 
     applyAtlasTransportPatches(spec);
 
     const zAfter = useAppStore.getState();
-    const effFrom = spec.from_query !== undefined ? spec.from_query : qStart;
-    const effTo = spec.to_query !== undefined ? spec.to_query : qEnd;
+    const effFrom = spec.from_query !== undefined ? spec.from_query : uiSnap.qStart;
+    const effTo = spec.to_query !== undefined ? spec.to_query : uiSnap.qEnd;
 
     const stateAfter = {
       app_mode: zAfter.mode,
@@ -349,7 +375,7 @@ export function TransportMode() {
       transportShowTransfers: zAfter.transportShowTransfers,
       effective_from_query: effFrom,
       effective_to_query: effTo,
-      dock_tab: spec.dock_tab ?? dockTab,
+      dock_tab: spec.dock_tab ?? uiSnap.dockTab,
     };
 
     void postShellClientLog("atlas_transport_action", {
@@ -362,30 +388,26 @@ export function TransportMode() {
 
     const run = spec.run;
     if (!run || run === "none") {
-      setAtlasTransportAction(null);
       return;
     }
 
     if (run === "reset_route") {
       clearRoute();
       void postShellClientLog("atlas_transport_trigger", { seq: mySeq, trigger: "reset_route" });
-      setAtlasTransportAction(null);
       return;
     }
     if (run === "compute") {
       void postShellClientLog("atlas_transport_trigger", { seq: mySeq, trigger: "compute" });
       void (async () => {
         await computeRoute();
-        setAtlasTransportAction(null);
       })();
       return () => {
         cancelled = true;
       };
     }
     if (run === "refresh_map") {
-      void refreshMap();
+      void refreshMapRef.current();
       void postShellClientLog("atlas_transport_trigger", { seq: mySeq, trigger: "refresh_map" });
-      setAtlasTransportAction(null);
       return;
     }
     if (run === "clear_map_highlight") {
@@ -393,9 +415,8 @@ export function TransportMode() {
       setMapSelectedStopId(null);
       setMapSelectedStationId(null);
       setStopLookupQ("");
-      void refreshMap({ selectedStopId: null, selectedStationId: null });
+      void refreshMapRef.current({ selectedStopId: null, selectedStationId: null });
       void postShellClientLog("atlas_transport_trigger", { seq: mySeq, trigger: "clear_map_highlight" });
-      setAtlasTransportAction(null);
       return;
     }
 
@@ -404,11 +425,11 @@ export function TransportMode() {
         const st = useAppStore.getState();
         const gv = st.transportGraphViz;
         const sf = gv === "station";
-        const qRaw = spec.stop_lookup_query !== undefined ? spec.stop_lookup_query : stopLookupQ;
+        const qRaw =
+          spec.stop_lookup_query !== undefined ? spec.stop_lookup_query : uiSnap.stopLookupQ;
         const q = (qRaw ?? "").trim();
         if (q.length < 2) {
           setStopLookupErr("Type at least 2 characters.");
-          setAtlasTransportAction(null);
           return;
         }
         setStopLookupErr(null);
@@ -419,14 +440,13 @@ export function TransportMode() {
             setStopLookupErr(sf ? "No station found for that query." : "No stop found for that query.");
             setMapSelectedStopId(null);
             setMapSelectedStationId(null);
-            void refreshMap({ selectedStopId: null, selectedStationId: null });
+            void refreshMapRef.current({ selectedStopId: null, selectedStationId: null });
             void postShellClientLog("atlas_transport_trigger", {
               seq: mySeq,
               trigger: "search_map",
               ok: false,
               matches: 0,
             });
-            setAtlasTransportAction(null);
             return;
           }
           if (sf && first.station_id) {
@@ -435,13 +455,13 @@ export function TransportMode() {
             const label = `${first.station_name ?? first.stop_name ?? ""}${lineSuffix(first.line)}`.trim();
             setStopLookupQ(label);
             setSuggestions([]);
-            void refreshMap({ selectedStationId: first.station_id, selectedStopId: null });
+            void refreshMapRef.current({ selectedStationId: first.station_id, selectedStopId: null });
           } else if (first.stop_id) {
             setMapSelectedStopId(first.stop_id);
             setMapSelectedStationId(null);
             setStopLookupQ(`${first.stop_name ?? first.stop_id} | ${first.stop_id}`);
             setSuggestions([]);
-            void refreshMap({ selectedStopId: first.stop_id, selectedStationId: null });
+            void refreshMapRef.current({ selectedStopId: first.stop_id, selectedStationId: null });
           } else {
             setStopLookupErr("No resolvable stop or station for that query.");
           }
@@ -454,8 +474,6 @@ export function TransportMode() {
         } catch {
           setStopLookupErr("Search failed.");
           void postShellClientLog("atlas_transport_trigger", { seq: mySeq, trigger: "search_map", ok: false });
-        } finally {
-          setAtlasTransportAction(null);
         }
       })();
       return () => {
@@ -465,6 +483,8 @@ export function TransportMode() {
 
     if (run === "route") {
       void (async () => {
+        atlasRouteProcessingRef.current = true;
+        try {
         const st0 = useAppStore.getState();
         const gm = st0.transportGraphMode;
         const ulcc = st0.transportUseLcc;
@@ -480,7 +500,6 @@ export function TransportMode() {
             ok: false,
             error: "missing_from_or_to",
           });
-          setAtlasTransportAction(null);
           return;
         }
 
@@ -495,7 +514,7 @@ export function TransportMode() {
         setSuggestions([]);
 
         const fromSearch = await searchStops(fromQ, gm, ulcc, stationFirstIv);
-        if (cancelled || useAppStore.getState().atlasTransportAction?.seq !== mySeq) return;
+        if (cancelled) return;
 
         const fromRes = resolveEndpointFromMatches(fromQ, fromSearch.matches, stationFirstIv);
         void postShellClientLog("from_resolved", {
@@ -512,14 +531,12 @@ export function TransportMode() {
               ? "Multiple stations match the origin — pick one in the list below."
               : "Multiple stops match the origin — pick one in the list below."
           );
-          setAtlasTransportAction(null);
           return;
         }
         if (fromRes.kind === "none") {
           setRouteErr(
             stationFirstIv ? "No origin station found for that query." : "No origin stop found for that query."
           );
-          setAtlasTransportAction(null);
           return;
         }
 
@@ -528,7 +545,7 @@ export function TransportMode() {
         setRouteFocus("end");
 
         const toSearch = await searchStops(toQ, gm, ulcc, stationFirstIv);
-        if (cancelled || useAppStore.getState().atlasTransportAction?.seq !== mySeq) return;
+        if (cancelled) return;
 
         const toRes = resolveEndpointFromMatches(toQ, toSearch.matches, stationFirstIv);
         void postShellClientLog("to_resolved", {
@@ -545,7 +562,6 @@ export function TransportMode() {
               ? "Multiple stations match the destination — pick one in the list below."
               : "Multiple stops match the destination — pick one in the list below."
           );
-          setAtlasTransportAction(null);
           return;
         }
         if (toRes.kind === "none") {
@@ -554,7 +570,6 @@ export function TransportMode() {
               ? "No destination station found for that query."
               : "No destination stop found for that query."
           );
-          setAtlasTransportAction(null);
           return;
         }
 
@@ -578,7 +593,7 @@ export function TransportMode() {
 
         try {
           const r = await postRoute(gm, ulcc, routePayload);
-          if (cancelled || useAppStore.getState().atlasTransportAction?.seq !== mySeq) return;
+          if (cancelled) return;
           void postShellClientLog("ui_route_result", {
             seq: mySeq,
             ok: r.ok,
@@ -586,8 +601,16 @@ export function TransportMode() {
             path_len: r.path?.length ?? 0,
             error: r.error?.message ?? null,
           });
+          void postAgentEvent("transport.ui_route_result", {
+            seq: mySeq,
+            ok: r.ok,
+            routing_scope: r.routing_scope,
+            path_len: r.path?.length ?? 0,
+            error: r.error?.message ?? null,
+            result: r.result,
+          });
           void postShellClientLog("atlas_transport_trigger", { seq: mySeq, trigger: "route", ok: r.ok });
-          applyRouteResult(r);
+          applyRouteResultRef.current(r);
         } catch (e) {
           setRouteErr(e instanceof Error ? e.message : "Route failed");
           void postShellClientLog("ui_route_result", {
@@ -595,13 +618,18 @@ export function TransportMode() {
             ok: false,
             error: e instanceof Error ? e.message : "Route failed",
           });
+          void postAgentEvent("transport.ui_route_failed", {
+            seq: mySeq,
+            error: e instanceof Error ? e.message : "Route failed",
+          });
           void postShellClientLog("atlas_transport_trigger", {
             seq: mySeq,
             trigger: "route",
             ok: false,
           });
+        }
         } finally {
-          setAtlasTransportAction(null);
+          atlasRouteProcessingRef.current = false;
         }
       })();
     }
@@ -609,17 +637,7 @@ export function TransportMode() {
     return () => {
       cancelled = true;
     };
-  }, [
-    atlasTransportAction,
-    applyRouteResult,
-    setAtlasTransportAction,
-    dockTab,
-    routeFocus,
-    qStart,
-    qEnd,
-    stopLookupQ,
-    refreshMap,
-  ]);
+  }, [atlasTransportAction, setAtlasTransportAction]);
 
   async function searchStopOnMap() {
     setStopLookupErr(null);

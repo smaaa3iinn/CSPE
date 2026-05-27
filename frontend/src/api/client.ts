@@ -148,7 +148,7 @@ export async function postRoute(
   }>;
 }
 
-/** Structured logs for Atlas-driven transport (see product_ui_transport.log on the API host). */
+/** Structured logs for Atlas-driven transport (see logs/activity.log on the API host). */
 export async function postShellClientLog(event: string, data: Record<string, unknown>): Promise<void> {
   try {
     await fetch(apiUrl("/api/shell/client-log"), {

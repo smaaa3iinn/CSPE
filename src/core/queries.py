@@ -1,25 +1,40 @@
 from __future__ import annotations
 
 from collections import deque
+import difflib
 import re
 from typing import Any
 
 import networkx as nx
 
+from src.core.text_normalize import normalize_search_text, normalize_text
 
-def normalize_text(s: str) -> str:
-    s = str(s).strip().lower()
-    s = re.sub(r"\s+", " ", s)
-    return s
+
+def _score_name_match(normalized_name: str, normalized_query: str) -> int:
+    """Higher score = better match. Zero = no match."""
+    if not normalized_name or not normalized_query:
+        return 0
+    if normalized_name == normalized_query:
+        return 100
+    if normalized_name.startswith(normalized_query):
+        return 90
+    parts = [p for p in normalized_name.split() if p]
+    if any(p.startswith(normalized_query) for p in parts):
+        return 80
+    if normalized_query in normalized_name:
+        return 70
+    query_parts = [p for p in normalized_query.split() if p]
+    if query_parts and all(any(p in part or part.startswith(p) for part in parts) for p in query_parts):
+        return 65
+    ratio = difflib.SequenceMatcher(None, normalized_name, normalized_query).ratio()
+    if ratio >= 0.88:
+        return 55
+    return 0
 
 
 def _stop_name_prefix_match(normalized_name: str, q: str) -> bool:
-    """True if whole name or any whitespace-separated token starts with q."""
-    if not q:
-        return False
-    if normalized_name.startswith(q):
-        return True
-    return any(part.startswith(q) for part in normalized_name.split() if part)
+    """True if normalized name matches query at any tier."""
+    return _score_name_match(normalized_name, q) > 0
 
 
 def _station_search_extras(r: dict) -> dict[str, Any]:
@@ -296,61 +311,54 @@ def search_stations_autocomplete(
     if not isinstance(idx, StationLayerIndex):
         return []
 
-    seen_station: set[str] = set()
-    raw: list[dict] = []
+    scored: list[tuple[int, str, str, str]] = []  # (-score, label, station_id, match_source)
 
     for station_id, label in idx.station_label.items():
-        if station_id in seen_station:
-            continue
         nn = normalize_text(label)
-        if _stop_name_prefix_match(nn, q):
-            members = idx.station_to_stops.get(station_id, [])
-            primary = sorted(members)[0] if members else ""
-            line_src = (
-                _merge_mode_lines_union(G, members)
-                if station_compact
-                else (G.nodes[primary].get("lines") if primary in G else None)
-            )
-            raw.append(
-                {
-                    "station_id": station_id,
-                    "station_name": label,
-                    "stop_ids": members,
-                    "primary_stop_id": primary,
-                    "stop_id": primary,
-                    "stop_name": label,
-                    "_lines": line_src,
-                }
-            )
-            seen_station.add(station_id)
+        score = _score_name_match(nn, q)
+        if score:
+            scored.append((-score, label, station_id, "station_label"))
             continue
         for member in idx.station_to_stops.get(station_id, []):
             if member not in G:
                 continue
             name = str(G.nodes[member].get("stop_name", ""))
-            if name and _stop_name_prefix_match(normalize_text(name), q):
-                members = idx.station_to_stops.get(station_id, [])
-                primary = sorted(members)[0] if members else member
-                line_src = (
-                    _merge_mode_lines_union(G, members)
-                    if station_compact
-                    else G.nodes[primary].get("lines")
-                )
-                raw.append(
-                    {
-                        "station_id": station_id,
-                        "station_name": label,
-                        "stop_ids": members,
-                        "primary_stop_id": primary,
-                        "stop_id": primary,
-                        "stop_name": label,
-                        "_lines": line_src,
-                    }
-                )
-                seen_station.add(station_id)
+            if not name:
+                continue
+            ms = _score_name_match(normalize_text(name), q)
+            if ms:
+                scored.append((-ms, label, station_id, "stop_name"))
                 break
 
-    raw.sort(key=lambda r: normalize_text(r["station_name"]))
+    scored.sort(key=lambda row: (row[0], len(normalize_text(row[1])), normalize_text(row[1])))
+    seen_station: set[str] = set()
+    raw: list[dict] = []
+
+    for _, label, station_id, _src in scored:
+        if station_id in seen_station:
+            continue
+        members = idx.station_to_stops.get(station_id, [])
+        primary = sorted(members)[0] if members else ""
+        line_src = (
+            _merge_mode_lines_union(G, members)
+            if station_compact
+            else (G.nodes[primary].get("lines") if primary in G else None)
+        )
+        raw.append(
+            {
+                "station_id": station_id,
+                "station_name": label,
+                "stop_ids": members,
+                "primary_stop_id": primary,
+                "stop_id": primary,
+                "stop_name": label,
+                "_lines": line_src,
+            }
+        )
+        seen_station.add(station_id)
+        if len(raw) >= limit * 2:
+            break
+
     return _expand_and_cap_route_results(
         raw, mode=mode, limit=limit, station_compact=station_compact
     )

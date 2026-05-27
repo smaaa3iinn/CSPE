@@ -43,15 +43,15 @@ function Wait-AtlasHttpOk {
         [string]$Label,
         [int]$MaxSeconds = 120,
         [System.Diagnostics.Process]$WatchProcess,
-        [string]$StderrLogPath
+        [string]$ActivityLogPath
     )
     $deadline = (Get-Date).AddSeconds($MaxSeconds)
     $nextMsg = (Get-Date).AddSeconds(5)
     while ((Get-Date) -lt $deadline) {
         if ($null -ne $WatchProcess -and $WatchProcess.HasExited) {
-            $tail = Get-Content -LiteralPath $StderrLogPath -Tail 40 -ErrorAction SilentlyContinue
+            $tail = Get-Content -LiteralPath $ActivityLogPath -Tail 40 -ErrorAction SilentlyContinue
             $tailTxt = if ($tail) { $tail -join "`n" } else { '(empty)' }
-            throw ('Atlas API process exited early (exit code ' + $WatchProcess.ExitCode + '). Stderr log: ' + $StderrLogPath + "`n" + $tailTxt)
+            throw ('Atlas API process exited early (exit code ' + $WatchProcess.ExitCode + '). Activity log tail: ' + $ActivityLogPath + "`n" + $tailTxt)
         }
         try {
             $r = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
@@ -68,9 +68,9 @@ function Wait-AtlasHttpOk {
             $nextMsg = (Get-Date).AddSeconds(5)
         }
     }
-    $tail2 = Get-Content -LiteralPath $StderrLogPath -Tail 40 -ErrorAction SilentlyContinue
+    $tail2 = Get-Content -LiteralPath $ActivityLogPath -Tail 40 -ErrorAction SilentlyContinue
     $tailTxt2 = if ($tail2) { $tail2 -join "`n" } else { '(empty)' }
-    throw ('Timeout waiting for ' + $Label + ' at ' + $Url + '. Stderr tail from ' + $StderrLogPath + "`n" + $tailTxt2)
+    throw ('Timeout waiting for ' + $Label + ' at ' + $Url + '. Activity log tail from ' + $ActivityLogPath + "`n" + $tailTxt2)
 }
 
 function Resolve-AtlasPython {
@@ -101,6 +101,73 @@ function Resolve-AtlasPython {
     return $null
 }
 
+function Stop-StaleAtlasProcesses {
+    param([string]$AtlasRoot)
+
+    $stopped = 0
+    try {
+        Invoke-WebRequest -Uri "http://127.0.0.1:5055/shutdown" -Method POST `
+            -ContentType "application/json" -Body '{"intent":"shutdown"}' `
+            -UseBasicParsing -TimeoutSec 2 -ErrorAction SilentlyContinue | Out-Null
+        Start-Sleep -Milliseconds 800
+    }
+    catch {
+        # Atlas not running or shutdown route unavailable
+    }
+
+    $patterns = @(
+        'atlas_client\.app\.run_api',
+        'wake_service\\main\.py',
+        'wake_service/main\.py'
+    )
+    try {
+        Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+            Where-Object {
+                $cmd = $_.CommandLine
+                if (-not $cmd) { return $false }
+                foreach ($p in $patterns) {
+                    if ($cmd -match $p) { return $true }
+                }
+                return $false
+            } |
+            ForEach-Object {
+                Write-Host "  Stopping stale Atlas process PID $($_.ProcessId)"
+                Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+                $stopped++
+            }
+    }
+    catch {
+        Write-Warning "Could not enumerate python processes for Atlas cleanup: $_"
+    }
+
+    if ($stopped -gt 0) {
+        Start-Sleep -Milliseconds 600
+    }
+}
+
+function Initialize-ProjectLogFiles {
+    param([string]$LogDir)
+
+    $healthLog = Join-Path $LogDir "health.log"
+    $activityLog = Join-Path $LogDir "activity.log"
+    if (-not (Test-Path -LiteralPath $LogDir)) {
+        New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+    }
+    foreach ($f in @($healthLog, $activityLog)) {
+        try {
+            if (-not (Test-Path -LiteralPath $f)) {
+                New-Item -ItemType File -Path $f -Force | Out-Null
+                continue
+            }
+            Clear-Content -LiteralPath $f -ErrorAction Stop
+        }
+        catch {
+            Write-Warning ("Log file locked (will append): {0} - {1}" -f $f, $_)
+        }
+    }
+    return @{ Health = $healthLog; Activity = $activityLog }
+}
+
 $AtlasRoot = Join-Path $Root "src\work\atlas"
 $runApi = Join-Path $AtlasRoot "src\atlas_client\app\run_api.py"
 $wakeMain = Join-Path $AtlasRoot "src\wake_service\main.py"
@@ -109,6 +176,37 @@ $cspePy = Join-Path $Root ".venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $cspePy)) {
     $cspePy = "python"
 }
+
+$projectLogDir = Join-Path $Root "logs"
+$projectLogs = Initialize-ProjectLogFiles -LogDir $projectLogDir
+
+function Import-RepoDotEnv {
+    param([string]$EnvPath)
+    if (-not (Test-Path -LiteralPath $EnvPath)) { return }
+    Get-Content -LiteralPath $EnvPath | ForEach-Object {
+        $line = $_.Trim()
+        if (-not $line -or $line.StartsWith('#')) { return }
+        $eq = $line.IndexOf('=')
+        if ($eq -lt 1) { return }
+        $name = $line.Substring(0, $eq).Trim()
+        $value = $line.Substring($eq + 1).Trim().Trim('"').Trim("'")
+        if ($name) { Set-Item -Path "env:$name" -Value $value -Force }
+    }
+}
+Import-RepoDotEnv (Join-Path $Root ".env")
+if ($env:ATLAS_PLANNER_BACKEND) {
+    Write-Host 'Planner backend:' $env:ATLAS_PLANNER_BACKEND
+} else {
+    Write-Host 'Planner backend: openai (default)'
+}
+
+$env:CSPE_LOG_DIR = $projectLogDir
+$env:CSPE_HEALTH_LOG = $projectLogs.Health
+$env:CSPE_ACTIVITY_LOG = $projectLogs.Activity
+$env:CSPE_LOG_RESET = "0"
+Write-Host 'Project logs (reset each run):'
+Write-Host ('  health:   ' + $projectLogs.Health)
+Write-Host ('  activity: ' + $projectLogs.Activity)
 
 $atlasApiProc = $null
 $atlasWakeProc = $null
@@ -126,17 +224,7 @@ try {
                 throw 'Could not find python.exe for Atlas. Set ATLAS_PYTHON to your interpreter (see start_atlas.bat), or add src\work\atlas\.venv'
             }
             Write-Host '[1] Starting Atlas headless (API + Wake, no UI) using:' $atlasPy
-            $logDir = Join-Path $AtlasRoot "logs"
-            if (-not (Test-Path -LiteralPath $logDir)) {
-                New-Item -ItemType Directory -Path $logDir | Out-Null
-            }
-            $apiLog = Join-Path $logDir "api.log"
-            $apiErr = Join-Path $logDir "api.err.log"
-            $wakeLog = Join-Path $logDir "wake.log"
-            $wakeErr = Join-Path $logDir "wake.err.log"
-            foreach ($f in @($apiLog, $apiErr, $wakeLog, $wakeErr)) {
-                "" | Set-Content -LiteralPath $f -Encoding utf8
-            }
+            Stop-StaleAtlasProcesses -AtlasRoot $AtlasRoot
 
             # Atlas must see its own tree first; CSPE PYTHONPATH breaks `python -m src.atlas_client...`.
             $env:PYTHONPATH = $AtlasRoot
@@ -144,18 +232,16 @@ try {
 
             $atlasApiProc = Start-Process -FilePath $atlasPy `
                 -ArgumentList @("-m", "src.atlas_client.app.run_api") `
-                -WorkingDirectory $AtlasRoot -WindowStyle Hidden `
-                -RedirectStandardOutput $apiLog -RedirectStandardError $apiErr -PassThru
+                -WorkingDirectory $AtlasRoot -WindowStyle Hidden -PassThru
 
             Start-Sleep -Seconds 2
 
             $atlasWakeProc = Start-Process -FilePath $atlasPy `
                 -ArgumentList @( (Join-Path $AtlasRoot "src\wake_service\main.py") ) `
-                -WorkingDirectory $AtlasRoot -WindowStyle Hidden `
-                -RedirectStandardOutput $wakeLog -RedirectStandardError $wakeErr -PassThru
+                -WorkingDirectory $AtlasRoot -WindowStyle Hidden -PassThru
 
             Wait-AtlasHttpOk -Url "http://127.0.0.1:5055/health" -Label "Atlas API" -MaxSeconds 120 `
-                -WatchProcess $atlasApiProc -StderrLogPath $apiErr
+                -WatchProcess $atlasApiProc -ActivityLogPath $projectLogs.Activity
         }
     }
     else {
@@ -183,10 +269,11 @@ try {
     Write-Host '    Optional .env: VITE_API_BASE=http://YOUR_LAN_IP:8787 if you bypass the Vite proxy; SPOTIFY_REDIRECT_URI must match the page origin for OAuth.'
     Write-Host '    GraphXR viewer: run `cd viewers\graphxr; npm run dev -- -p 3000` in a second terminal for 3D/VR graph mode.'
     Write-Host '    Spotify dashboard: add redirect URI for each origin, e.g. http://192.168.x.x:5173/callback'
+    Write-Host '    Logs: Get-Content logs\activity.log -Wait  (background)  |  logs\health.log  (health checks)'
     Write-Host '    Press Ctrl+C here to stop the dev server; background Python processes will be stopped.'
     $frontendDir = Join-Path $Root "frontend"
     Set-Location $frontendDir
-    if (-not (Test-Path -LiteralPath (Join-Path $frontendDir "node_modules\vite"))) {
+    if (-not (Test-Path -LiteralPath (Join-Path $frontendDir 'node_modules\vite'))) {
         Write-Host '    Frontend dependencies missing; running npm install in frontend...'
         npm install
     }

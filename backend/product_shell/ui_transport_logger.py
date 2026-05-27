@@ -1,40 +1,19 @@
 """
-Human-readable file log for React UI transport actions (search, route, map refresh).
+Structured activity log lines for transport, Atlas shell bridge, and agent events.
 
-Parallel to Atlas lines like [ToolCall] Executing: cspe_search_stops — but sourced from
-FastAPI when the manual UI calls /api/transport/*.
-
-Log path: <repo>/logs/product_ui_transport.log (rotating).
+All output goes to <repo>/logs/activity.log (see src.core.project_logs).
 """
 
 from __future__ import annotations
 
 import json
-import logging
-from logging.handlers import RotatingFileHandler
-from pathlib import Path
 from typing import Any
 
-_CONFIGURED = False
+from src.core.project_logs import get_activity_logger
 
 
-def _logger() -> logging.Logger:
-    global _CONFIGURED
-    logger = logging.getLogger("cspe.ui.transport")
-    if _CONFIGURED:
-        return logger
-    logger.setLevel(logging.INFO)
-    logger.propagate = False
-    root = Path(__file__).resolve().parents[2]
-    log_dir = root / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    path = log_dir / "product_ui_transport.log"
-    if not logger.handlers:
-        h = RotatingFileHandler(path, maxBytes=2_000_000, backupCount=5, encoding="utf-8")
-        h.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
-        logger.addHandler(h)
-    _CONFIGURED = True
-    return logger
+def _logger():
+    return get_activity_logger("ui.transport")
 
 
 def _dumps(obj: Any) -> str:
@@ -53,7 +32,6 @@ def log_ui_search_stops(
     station_first: bool,
     matches: list[dict[str, Any]],
 ) -> None:
-    """Log GET /api/transport/stops/search (UI autocomplete / search tab)."""
     sample: list[dict[str, Any]] = []
     for m in (matches or [])[:3]:
         if not isinstance(m, dict):
@@ -86,7 +64,6 @@ def log_ui_route(
     to_station_id: str | None,
     response: dict[str, Any],
 ) -> None:
-    """Log POST /api/transport/route (Compute route in TransportMode)."""
     args: dict[str, Any] = {"mode": mode, "use_lcc": use_lcc, "routing": routing}
     if routing == "stop":
         args["from_stop_id"] = from_stop_id
@@ -123,19 +100,13 @@ def log_ui_route(
 
 
 def log_atlas_transport_intent_enqueued(payload: dict[str, Any]) -> None:
-    """Log atlas_transport_intent command queued for the React shell (before UI applies it)."""
-    msg = "[Atlas] transport_intent_enqueued " f"payload={_dumps(payload)}"
-    _logger().info(msg)
+    _logger().info("[Atlas] transport_intent_enqueued payload=%s", _dumps(payload))
 
 
 def log_atlas_transport_action_enqueued(payload: dict[str, Any]) -> None:
-    """Log atlas_transport_action (generalized transport UI control) queued for the React shell."""
-    msg = "[Atlas] transport_action_enqueued " f"payload={_dumps(payload)}"
-    _logger().info(msg)
+    _logger().info("[Atlas] transport_action_enqueued payload=%s", _dumps(payload))
 
 
 def log_atlas_transport_client_event(event: str, payload: dict[str, Any]) -> None:
-    """Log milestones from the browser (resolve, route payload, route result)."""
-    msg = f"[Atlas] transport_ui {event} " f"data={_dumps(payload)}"
-    _logger().info(msg)
+    _logger().info("[Atlas] transport_ui %s data=%s", event, _dumps(payload))
 

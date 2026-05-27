@@ -9,6 +9,8 @@ interface ImportMetaEnv {
   readonly VITE_GRAPHXR_VIEWER_URL?: string;
   /** Legacy alias for VITE_GRAPHXR_VIEWER_URL. */
   readonly VITE_A25_VIEWER_URL?: string;
+  /** Set to "1" to use SSE /api/shell/stream instead of polling. */
+  readonly VITE_SHELL_SSE?: string;
   /** Absolute product shell URL, also accepted by Vite proxy config. */
   readonly PRODUCT_SHELL_URL?: string;
 }

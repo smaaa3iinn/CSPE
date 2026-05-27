@@ -9,3 +9,5 @@ dist/
 build/
 
 data/
+logs/*.log
+logs/*.log.*

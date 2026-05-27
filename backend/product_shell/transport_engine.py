@@ -701,20 +701,54 @@ def render_transport_map_html(
 
 
 def search_stops(
-    q: str, *, limit: int, mode: str, use_lcc: bool, station_first: bool = False
+    q: str,
+    *,
+    limit: int,
+    mode: str,
+    use_lcc: bool,
+    station_first: bool = False,
+    fallback_lcc: bool = True,
+    mode_fallback: bool = True,
 ) -> list[dict[str, Any]]:
     from src.core.queries import search_stations_autocomplete
 
-    G = graph_for(mode, use_lcc)
-    idx = station_layer_for(mode, use_lcc)
-    matches = search_stations_autocomplete(
-        G,
-        idx,
-        (q or "").strip(),
-        limit=limit,
-        mode=mode,
-        station_compact=station_first,
-    )
+    def _run(search_mode: str, lcc: bool) -> list[dict[str, Any]]:
+        G = graph_for(search_mode, lcc)
+        idx = station_layer_for(search_mode, lcc)
+        matches = search_stations_autocomplete(
+            G,
+            idx,
+            (q or "").strip(),
+            limit=limit,
+            mode=search_mode if search_mode != "all" else mode,
+            station_compact=station_first,
+        )
+        return _format_search_matches(matches, station_first=station_first)
+
+    lcc_order: list[bool] = []
+    if use_lcc:
+        lcc_order.append(True)
+    if fallback_lcc or not use_lcc:
+        lcc_order.append(False)
+    if not lcc_order:
+        lcc_order = [False]
+
+    for lcc in lcc_order:
+        out = _run(mode, lcc)
+        if out:
+            return out
+
+    if mode not in ("all", "") and mode_fallback:
+        for lcc in lcc_order:
+            out = _run("all", lcc)
+            if out:
+                return out
+    return []
+
+
+def _format_search_matches(
+    matches: list[dict[str, Any]], *, station_first: bool
+) -> list[dict[str, Any]]:
     out = []
     for m in matches:
         if not isinstance(m, dict):

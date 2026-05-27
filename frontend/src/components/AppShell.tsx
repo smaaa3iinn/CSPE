@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { ToolRail } from "./ToolRail";
 import { AtlasRailPanel } from "./AtlasRailPanel";
+import { AgentContextSync } from "./AgentContextSync";
 import { ShellCommandListener } from "./ShellCommandListener";
 import { TransportMode } from "../modes/TransportMode";
 import { VisualBoardMode } from "../modes/VisualBoardMode";
@@ -21,6 +22,7 @@ export function AppShell() {
   return (
     <div className="app-root">
       <ShellCommandListener />
+      <AgentContextSync />
       <header className="app-topbar">
         <i className="fa-solid fa-hexagon-nodes app-topbar__icon" aria-hidden />
         <span className="app-topbar__title">{APP_PAGE_TITLE}</span>

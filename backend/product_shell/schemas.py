@@ -130,3 +130,36 @@ class MemoryTaskCreate(BaseModel):
 class MemoryTaskPatch(BaseModel):
     title: str | None = Field(None, min_length=1, max_length=2000)
     status: Literal["todo", "in_progress", "done"] | None = None
+
+
+class AgentContextPatch(BaseModel):
+    ui_mode: Literal["transport", "visual", "memory", "music"] | None = None
+    transport: dict[str, Any] | None = None
+    memory_project_id: str | None = None
+    spotify: dict[str, Any] | None = None
+
+
+class AgentEventBody(BaseModel):
+    event: str = Field(..., min_length=1)
+    data: dict[str, Any] = Field(default_factory=dict)
+    source: str | None = "browser"
+
+
+class AgentTransportRouteRequest(BaseModel):
+    from_query: str = Field(..., min_length=1)
+    to_query: str = Field(..., min_length=1)
+    mode: Literal["all", "metro", "rail", "tram", "bus", "other"] = "metro"
+    use_lcc: bool = True
+    routing_scope: Literal["stop", "station"] = "station"
+    station_first: bool = True
+    sync_ui: bool = True
+    open_graph3d: bool = False
+    graph_viz_mode: Literal["stop", "station", "hybrid"] = "station"
+
+
+class AgentTransportRouteResponse(BaseModel):
+    ok: bool
+    needs_user_choice: bool = False
+    result: dict[str, Any]
+    graph3d: dict[str, Any] | None = None
+    shell_queued: int = 0

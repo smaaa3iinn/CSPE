@@ -40,6 +40,17 @@ export function specKeysProvided(spec: AtlasTransportActionSpec): string[] {
   return keys.filter((k) => spec[k] !== undefined);
 }
 
+/** Stable key for deduping identical shell transport actions (sorted spec fields). */
+export function transportActionSpecFingerprint(spec: AtlasTransportActionSpec): string {
+  const keys = (Object.keys(spec) as (keyof AtlasTransportActionSpec)[]).sort();
+  const normalized: Record<string, unknown> = {};
+  for (const k of keys) {
+    const v = spec[k];
+    if (v !== undefined) normalized[k] = v;
+  }
+  return JSON.stringify(normalized);
+}
+
 const GM: TransportGraphModeKey[] = ["all", "metro", "rail", "tram", "bus", "other"];
 
 /** Build a spec from loosely-typed shell JSON; unknown keys ignored. */

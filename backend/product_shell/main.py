@@ -18,12 +18,24 @@ def _load_local_env() -> None:
 
 _load_local_env()
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.product_shell.routers import atlas, chat, memory, shell, spotify, transport
+from src.core.project_logs import configure_product_shell_logging, configure_uvicorn_loggers, log_http_line
+
+configure_product_shell_logging()
+configure_uvicorn_loggers()
+
+from backend.product_shell.routers import agent, atlas, chat, memory, shell, spotify, transport
 
 app = FastAPI(title="CSPE Product Shell API", version="0.1.0")
+
+
+@app.middleware("http")
+async def _project_log_middleware(request: Request, call_next):
+    response = await call_next(request)
+    log_http_line("product_shell", request.method, request.url.path, response.status_code)
+    return response
 
 _origins = os.getenv(
     "PRODUCT_SHELL_CORS_ORIGINS",
@@ -53,6 +65,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(agent.router, prefix="/api")
 app.include_router(atlas.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")
 app.include_router(shell.router, prefix="/api")
@@ -71,5 +84,8 @@ def health() -> dict:
             "spotify_track_search": True,
             "spotify_playlists": True,
             "shell_commands": True,
+            "agent_planner": True,
+            "agent_context": True,
+            "shell_sse": True,
         },
     }

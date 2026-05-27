@@ -1,16 +1,21 @@
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import type { StructuredOutput } from "../types/payloads";
+import { postAgentEvent } from "../api/agentFeedback";
 import { apiUrl } from "../api/config";
 import { useAppStore } from "../store";
 import type { AtlasTransportActionSpec } from "../transport/atlasTransportTypes";
-import { normalizeAtlasTransportSpec } from "../transport/atlasTransportTypes";
+import { normalizeAtlasTransportSpec, transportActionSpecFingerprint } from "../transport/atlasTransportTypes";
 
 const POLL_MS = 600;
+const USE_SHELL_SSE = import.meta.env.VITE_SHELL_SSE === "1";
 
 function enqueueAtlasTransportAction(spec: AtlasTransportActionSpec) {
   const s = useAppStore.getState();
-  const nextSeq = (s.atlasTransportAction?.seq ?? 0) + 1;
+  const fp = transportActionSpecFingerprint(spec);
+  const pending = s.atlasTransportAction;
+  if (pending && transportActionSpecFingerprint(pending.spec) === fp) return;
+  const nextSeq = (pending?.seq ?? 0) + 1;
   // eslint-disable-next-line no-console
   console.info("[atlas_transport] action enqueued", { seq: nextSeq, spec });
   s.setAtlasTransportAction({ seq: nextSeq, spec });
@@ -118,6 +123,18 @@ export function ShellCommandListener() {
 
   useEffect(() => {
     let cancelled = false;
+
+    const drainCommands = (cmds: unknown[]) => {
+      for (const c of cmds) {
+        if (c && typeof c === "object" && !Array.isArray(c)) {
+          applyOne(c as Record<string, unknown>, navRef.current);
+        }
+      }
+      if (cmds.length > 0) {
+        void postAgentEvent("shell.commands_applied", { count: cmds.length });
+      }
+    };
+
     const tick = async () => {
       if (cancelled) return;
       try {
@@ -125,20 +142,37 @@ export function ShellCommandListener() {
         if (!r.ok) return;
         const data = (await r.json()) as { commands?: unknown[] };
         const cmds = Array.isArray(data.commands) ? data.commands : [];
-        for (const c of cmds) {
-          if (c && typeof c === "object" && !Array.isArray(c)) {
-            applyOne(c as Record<string, unknown>, navRef.current);
-          }
-        }
+        drainCommands(cmds);
       } catch {
         /* offline or API down */
       }
     };
-    const id = window.setInterval(() => void tick(), POLL_MS);
-    void tick();
+
+    let es: EventSource | null = null;
+    if (USE_SHELL_SSE) {
+      try {
+        es = new EventSource(apiUrl("/api/shell/stream"));
+        es.addEventListener("commands", (ev) => {
+          if (cancelled) return;
+          try {
+            const data = JSON.parse((ev as MessageEvent).data) as { commands?: unknown[] };
+            drainCommands(Array.isArray(data.commands) ? data.commands : []);
+          } catch {
+            /* bad payload */
+          }
+        });
+      } catch {
+        /* EventSource unsupported */
+      }
+    }
+
+    const id = USE_SHELL_SSE ? undefined : window.setInterval(() => void tick(), POLL_MS);
+    if (!USE_SHELL_SSE) void tick();
+
     return () => {
       cancelled = true;
-      window.clearInterval(id);
+      if (id !== undefined) window.clearInterval(id);
+      es?.close();
     };
   }, []);
 

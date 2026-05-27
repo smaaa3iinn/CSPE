@@ -129,9 +129,7 @@ def _empty_edges_df() -> pd.DataFrame:
     return pd.DataFrame(columns=EDGE_COLUMNS)
 
 
-def _normalize_stop_name(name: str) -> str:
-    return re.sub(r"\s+", " ", str(name).strip().lower())
-
+from src.core.text_normalize import normalize_search_text as _normalize_stop_name
 
 def _distance_lookup(pos_all: pd.DataFrame) -> dict[str, tuple[float, float]]:
     if pos_all is None or pos_all.empty:
