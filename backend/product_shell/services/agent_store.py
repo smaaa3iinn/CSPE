@@ -48,7 +48,7 @@ def get_context() -> dict[str, Any]:
                 "memory": ["projects", "tasks"],
                 "music": ["spotify_play", "spotify_pause", "spotify_next"],
                 "ui": ["set_mode", "transport_action", "structured_outputs"],
-                "search": ["web_search", "image_search"],
+                "search": ["web_search", "image_search", "place_lookup_online"],
             },
         }
 

@@ -61,7 +61,7 @@ type State = {
   visualPanels: VisualPanel[];
   transportGraphMode: TransportMode;
   transportUseLcc: boolean;
-  transportViz: "geographic" | "network_3d";
+  transportViz: "geographic" | "network_3d" | "graph3d";
   /** Map overlay: underlying routing always uses stop graph */
   transportGraphViz: "stop" | "station" | "hybrid";
   transportPathIds: string[] | null;
@@ -81,7 +81,8 @@ type State = {
   /** Map / GraphXR shared selection (stop or station highlight). */
   transportMapSelectionStopId: string | null;
   transportMapSelectionStationId: string | null;
-  atlasTransportAction: AtlasTransportActionPayload | null;
+  atlasTransportActions: AtlasTransportActionPayload[];
+  atlasTransportActionSeq: number;
   memoryProjectId: string | null;
   /** Transport map: hide HUD panels for full-bleed map (toggle with F). */
   transportMapChromeHidden: boolean;
@@ -92,7 +93,7 @@ type State = {
   applyChatResponse: (outputs: StructuredOutput[], err: string | null) => void;
   setTransportGraphMode: (m: TransportMode) => void;
   setTransportUseLcc: (v: boolean) => void;
-  setTransportViz: (v: "geographic" | "network_3d") => void;
+  setTransportViz: (v: "geographic" | "network_3d" | "graph3d") => void;
   setTransportGraphViz: (v: "stop" | "station" | "hybrid") => void;
   setTransportPathIds: (p: string[] | null) => void;
   setTransportStationPathIds: (p: string[] | null) => void;
@@ -110,7 +111,8 @@ type State = {
     stopId?: string | null;
     stationId?: string | null;
   }) => void;
-  setAtlasTransportAction: (p: AtlasTransportActionPayload | null) => void;
+  enqueueAtlasTransportAction: (spec: AtlasTransportActionPayload["spec"]) => AtlasTransportActionPayload;
+  completeAtlasTransportAction: (seq: number) => void;
   setMemoryProjectId: (id: string | null) => void;
   syncAtlasVoiceUi: (outputs: StructuredOutput[]) => void;
   setTransportMapChromeHidden: (hidden: boolean) => void;
@@ -143,7 +145,8 @@ export const useAppStore = create<State>((set) => ({
   transportMapFocus: null,
   transportMapSelectionStopId: null,
   transportMapSelectionStationId: null,
-  atlasTransportAction: null,
+  atlasTransportActions: [],
+  atlasTransportActionSeq: 0,
   memoryProjectId: null,
   transportMapChromeHidden: false,
 
@@ -205,7 +208,22 @@ export const useAppStore = create<State>((set) => ({
       transportMapSelectionStationId:
         payload.stationId !== undefined ? payload.stationId : s.transportMapSelectionStationId,
     })),
-  setAtlasTransportAction: (p) => set({ atlasTransportAction: p }),
+  enqueueAtlasTransportAction: (spec) => {
+    let payload!: AtlasTransportActionPayload;
+    set((s) => {
+      const seq = s.atlasTransportActionSeq + 1;
+      payload = { seq, spec };
+      return {
+        atlasTransportActionSeq: seq,
+        atlasTransportActions: [...s.atlasTransportActions, payload],
+      };
+    });
+    return payload;
+  },
+  completeAtlasTransportAction: (seq) =>
+    set((s) => ({
+      atlasTransportActions: s.atlasTransportActions.filter((a) => a.seq !== seq),
+    })),
   setMemoryProjectId: (id) => set({ memoryProjectId: id }),
   syncAtlasVoiceUi: (outputs) =>
     set((s) => {

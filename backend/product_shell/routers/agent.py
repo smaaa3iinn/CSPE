@@ -12,10 +12,13 @@ from backend.product_shell.routers import shell as shell_router
 from backend.product_shell.schemas import (
     AgentContextPatch,
     AgentEventBody,
+    AgentPlaceLookupRequest,
+    AgentPlaceLookupResponse,
     AgentTransportRouteRequest,
     AgentTransportRouteResponse,
 )
 from backend.product_shell.services import agent_store, agent_tools
+from src.core.project_logs import log_compact_line
 
 router = APIRouter(tags=["agent"])
 
@@ -65,7 +68,7 @@ def post_agent_transport_route(body: AgentTransportRouteRequest) -> AgentTranspo
     graph3d = None
     shell_queued = 0
 
-    if result.get("ok") and body.sync_ui:
+    if body.sync_ui:
         cmds = agent_tools.shell_commands_for_route(result)
         shell_queued = shell_router.enqueue_commands(cmds)
 
@@ -93,6 +96,61 @@ def post_agent_transport_route(body: AgentTransportRouteRequest) -> AgentTranspo
         result=result,
         graph3d=graph3d,
         shell_queued=shell_queued,
+    )
+
+
+@router.post("/agent/transport/place-lookup", response_model=AgentPlaceLookupResponse)
+def post_agent_place_lookup(body: AgentPlaceLookupRequest) -> AgentPlaceLookupResponse:
+    """Resolve a station or POI locally and build a web-search query. Chat-only; no map sync."""
+    result = agent_tools.lookup_place_for_chat(
+        body.query,
+        kind=body.kind,
+        near_query=body.near_query,
+        topic=body.topic,
+        includes_today=body.includes_today,
+        mode=body.mode,
+        use_lcc=body.use_lcc,
+        station_first=body.station_first,
+    )
+    if result.get("ok"):
+        local = result.get("local") if isinstance(result.get("local"), dict) else {}
+        agent_store.patch_world_state(
+            {
+                "transport": {
+                    "last_place_lookup": {
+                        "query": result.get("query") or body.query,
+                        "place_kind": result.get("place_kind"),
+                        "topic": result.get("topic") or body.topic,
+                        "label": local.get("label") or result.get("query") or body.query,
+                    }
+                }
+            }
+        )
+        log_compact_line(
+            "[PlaceLookup] "
+            f"query={body.query!r} near={result.get('near_query')!r} "
+            f"source={result.get('enrichment_source')!r} "
+            f"web={result.get('web_search_query')!r}"
+        )
+        if result.get("idfm_summary"):
+            log_compact_line(f"[PlaceLookup] idfm_summary_chars={len(str(result.get('idfm_summary') or ''))}")
+    elif result.get("needs_clarification"):
+        log_compact_line(f"[PlaceLookup] needs_context query={body.query!r} error={result.get('error')!r}")
+    return AgentPlaceLookupResponse(
+        ok=bool(result.get("ok")),
+        place_kind=result.get("place_kind"),
+        query=result.get("query"),
+        near_query=result.get("near_query"),
+        topic=result.get("topic"),
+        local=result.get("local"),
+        local_summary=result.get("local_summary"),
+        idfm_summary=result.get("idfm_summary"),
+        idfm_data=result.get("idfm_data"),
+        enrichment_source=result.get("enrichment_source"),
+        web_search_query=result.get("web_search_query"),
+        needs_clarification=bool(result.get("needs_clarification")),
+        error=result.get("error"),
+        candidates=result.get("candidates"),
     )
 
 

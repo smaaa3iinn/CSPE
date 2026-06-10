@@ -80,6 +80,24 @@ export async function postTransportExplorationOverlay(body: {
   return r.json();
 }
 
+export async function postTransportRouteOverlay(body: {
+  route_overlay: Record<string, unknown> | null;
+}): Promise<{
+  route: Record<string, unknown>;
+  view: { lat: number; lon: number; zoom: number } | null;
+}> {
+  const r = await fetch(apiUrl("/api/transport/map/route-overlay"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(t || `route overlay ${r.status}`);
+  }
+  return r.json();
+}
+
 export async function postTransportGraph3DSession(body: Record<string, unknown>): Promise<{
   session_id: string;
   graph_url: string;
@@ -184,7 +202,7 @@ export async function postRoute(
           from_station_id: endpoints.from_station_id,
           to_station_id: endpoints.to_station_id,
         };
-  const r = await fetch("/api/transport/route", {
+  const r = await fetch(apiUrl("/api/transport/route"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

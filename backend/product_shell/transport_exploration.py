@@ -122,6 +122,218 @@ def is_deictic_query(query: str) -> bool:
     return bool(_DEICTIC_QUERY.match((query or "").strip()))
 
 
+def name_match_score(query: str, candidate: str) -> float:
+    """Simple fuzzy score for matching a user place name to a local POI/stop label."""
+    q = " ".join(str(query or "").lower().split())
+    c = " ".join(str(candidate or "").lower().split())
+    if not q or not c:
+        return 0.0
+    if q == c:
+        return 1.0
+    if q in c or c in q:
+        return 0.88
+    q_tokens = set(q.split())
+    c_tokens = set(c.split())
+    if not q_tokens:
+        return 0.0
+    overlap = len(q_tokens & c_tokens) / len(q_tokens)
+    if overlap >= 0.66:
+        return 0.72 + 0.15 * overlap
+    return overlap * 0.5
+
+
+NAME_LOOKUP_POI_LIMIT = 200
+NAME_LOOKUP_MIN_SCORE = 0.45
+
+
+def _exact_match_threshold(query: str) -> float:
+    """Multi-word brand names (e.g. Hugo Boss) tolerate slightly weaker token overlap."""
+    tokens = [t for t in str(query or "").split() if t]
+    return 0.5 if len(tokens) >= 2 else 0.55
+
+
+def _rank_pois_by_name(
+    query: str,
+    rows: list[dict[str, Any]],
+    *,
+    min_score: float = NAME_LOOKUP_MIN_SCORE,
+) -> list[tuple[float, dict[str, Any]]]:
+    ranked: list[tuple[float, dict[str, Any]]] = []
+    for row in rows:
+        score = name_match_score(query, str(row.get("name") or row.get("type") or ""))
+        if score >= min_score:
+            ranked.append((score, row))
+    ranked.sort(key=lambda item: (-item[0], float(item[1].get("distance_m") or 0)))
+    return ranked
+
+
+def _radii_for_name_lookup(snap: dict[str, Any], *, default_radius_m: int) -> list[int]:
+    radii: list[int] = []
+    snap_radius = snap.get("radius_m")
+    if snap_radius is not None:
+        radii.append(clamp_radius(snap_radius))
+    for radius in (default_radius_m, 1500, 2500, MAX_RADIUS_M):
+        clamped = clamp_radius(radius)
+        if clamped not in radii:
+            radii.append(clamped)
+    return radii
+
+
+def _center_for_poi_lookup(
+    snap_center: dict[str, Any] | None,
+    near_query: str | None,
+    *,
+    agent_context: dict[str, Any] | None,
+    mode: GraphMode,
+    use_lcc: bool,
+    station_first: bool,
+) -> dict[str, Any]:
+    """Prefer exploration snapshot coordinates; fall back to stop/station resolution."""
+    if isinstance(snap_center, dict):
+        try:
+            lat = float(snap_center["lat"])
+            lon = float(snap_center["lon"])
+        except (KeyError, TypeError, ValueError):
+            pass
+        else:
+            label = str(
+                snap_center.get("label")
+                or snap_center.get("station_name")
+                or snap_center.get("stop_name")
+                or near_query
+                or ""
+            ).strip()
+            return {
+                "status": "exact",
+                "center": {
+                    "lat": lat,
+                    "lon": lon,
+                    "label": label or "explored area",
+                    "station_id": snap_center.get("station_id"),
+                    "station_name": snap_center.get("station_name"),
+                    "stop_id": snap_center.get("stop_id"),
+                    "stop_name": snap_center.get("stop_name"),
+                },
+            }
+    return resolve_exploration_center(
+        (near_query or "").strip()
+        or (str(snap_center.get("label") or "") if isinstance(snap_center, dict) else "")
+        or "",
+        agent_context=agent_context,
+        mode=mode,
+        use_lcc=use_lcc,
+        station_first=station_first,
+    )
+
+
+def resolve_poi_by_name(
+    name: str,
+    *,
+    near_query: str | None = None,
+    agent_context: dict[str, Any] | None = None,
+    radius_m: int = 900,
+    mode: GraphMode = "metro",
+    use_lcc: bool = False,
+    station_first: bool = True,
+) -> dict[str, Any]:
+    """Resolve one POI by name using exploration snapshot first, then local index near a center."""
+    q = (name or "").strip()
+    if len(q) < 2:
+        return {"status": "error", "error": "POI name too short", "query": q}
+
+    snap = _current_exploration_snapshot()
+    snap_center = snap.get("center") if isinstance(snap.get("center"), dict) else None
+    best_snap: dict[str, Any] | None = None
+    best_snap_score = 0.0
+    for row in snap.get("nearby_pois") or []:
+        if not isinstance(row, dict):
+            continue
+        score = name_match_score(q, str(row.get("name") or row.get("type") or ""))
+        if score > best_snap_score:
+            best_snap_score = score
+            best_snap = row
+    snap_threshold = _exact_match_threshold(q)
+    if best_snap is not None and best_snap_score >= snap_threshold:
+        return {
+            "status": "exact",
+            "query": q,
+            "poi": best_snap,
+            "center": snap_center,
+            "match_score": best_snap_score,
+            "source": "exploration_snapshot",
+        }
+
+    lookup, err = _poi_lookup_or_error()
+    if lookup is None:
+        out = dict(err or {})
+        out["status"] = "error"
+        out["query"] = q
+        return out
+
+    center_res = _center_for_poi_lookup(
+        snap_center,
+        near_query,
+        agent_context=agent_context,
+        mode=mode,
+        use_lcc=use_lcc,
+        station_first=station_first,
+    )
+    if center_res.get("status") != "exact":
+        return {
+            "status": center_res.get("status") or "none",
+            "query": q,
+            "near_query": near_query,
+            "error": center_res.get("error") or "Could not resolve a nearby center for POI lookup",
+            "closest_matches": center_res.get("closest_matches") or [],
+        }
+
+    center = center_res["center"]
+    threshold = _exact_match_threshold(q)
+    best_score = 0.0
+    best_row: dict[str, Any] | None = None
+    ambiguous_candidates: list[dict[str, Any]] = []
+    for search_radius in _radii_for_name_lookup(snap, default_radius_m=radius_m):
+        rows = _nearby_pois_at_center(
+            center,
+            lookup,
+            radius_m=search_radius,
+            limit=NAME_LOOKUP_POI_LIMIT,
+            categories=["all"],
+        )
+        ranked = _rank_pois_by_name(q, rows)
+        if ranked and ranked[0][0] > best_score:
+            best_score = ranked[0][0]
+            best_row = ranked[0][1]
+            ambiguous_candidates = [row for _, row in ranked[:5]]
+        if best_score >= threshold:
+            break
+
+    if best_row is not None and best_score >= threshold:
+        return {
+            "status": "exact",
+            "query": q,
+            "poi": best_row,
+            "center": center,
+            "match_score": best_score,
+            "source": "poi_index",
+        }
+    if ambiguous_candidates:
+        return {
+            "status": "ambiguous",
+            "query": q,
+            "center": center,
+            "candidates": ambiguous_candidates,
+        }
+    area_label = center.get("label") or near_query or "that area"
+    return {
+        "status": "inferred",
+        "query": q,
+        "center": center,
+        "near_query": near_query,
+        "error": f"No local POI matching {q!r} near {area_label}; web lookup will use area context.",
+    }
+
+
 def query_from_agent_context(context: dict[str, Any] | None) -> str | None:
     if not isinstance(context, dict):
         return None

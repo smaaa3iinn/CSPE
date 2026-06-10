@@ -2874,25 +2874,66 @@ def render_mapbox_gl_html(
       }}
     }};
 
+    const setSourceDataIfPresent = (sourceId, data) => {{
+      const source = map.getSource(sourceId);
+      if (source && source.setData) {{
+        source.setData(data || {{ type: 'FeatureCollection', features: [] }});
+        return true;
+      }}
+      return false;
+    }};
+
+    const applyRouteOverlay = (route, view) => {{
+      if (!mapExplorationReady) {{
+        return;
+      }}
+      const empty = {{ type: 'FeatureCollection', features: [] }};
+      const payloadRoute = route || {{}};
+      setSourceDataIfPresent('path-lines', payloadRoute.path || empty);
+      setSourceDataIfPresent('station-net-lines', payloadRoute.station_network_lines || empty);
+      setSourceDataIfPresent('station-net-points', payloadRoute.station_network_points || empty);
+      if (view && view.lon != null && view.lat != null && view.zoom != null) {{
+        map.flyTo({{
+          center: [view.lon, view.lat],
+          zoom: view.zoom,
+          duration: 700,
+          essential: true
+        }});
+      }}
+      try {{
+        window.parent.postMessage({{ type: 'cspe-map-route-applied' }}, '*');
+      }} catch (error) {{
+        /* standalone preview */
+      }}
+    }};
+
     const flushQueuedExplorationMessages = () => {{
       mapExplorationReady = true;
       applyExplorationOverlay(payload.exploration || null, null);
       for (const msg of queuedExplorationMessages) {{
-        applyExplorationOverlay(msg.exploration || null, msg.view || null);
+        if (msg.type === 'cspe-map-set-route') {{
+          applyRouteOverlay(msg.route || null, msg.view || null);
+        }} else {{
+          applyExplorationOverlay(msg.exploration || null, msg.view || null);
+        }}
       }}
       queuedExplorationMessages.length = 0;
     }};
 
     window.addEventListener('message', (event) => {{
       const data = event.data;
-      if (!data || data.type !== 'cspe-map-set-exploration') {{
+      if (!data || (data.type !== 'cspe-map-set-exploration' && data.type !== 'cspe-map-set-route')) {{
         return;
       }}
       if (!mapExplorationReady) {{
         queuedExplorationMessages.push(data);
         return;
       }}
-      applyExplorationOverlay(data.exploration || null, data.view || null);
+      if (data.type === 'cspe-map-set-route') {{
+        applyRouteOverlay(data.route || null, data.view || null);
+      }} else {{
+        applyExplorationOverlay(data.exploration || null, data.view || null);
+      }}
     }});
 
     map.on('load', () => {{

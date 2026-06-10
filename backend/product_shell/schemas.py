@@ -50,6 +50,15 @@ class TransportExplorationOverlayResponse(BaseModel):
     view: dict[str, float] | None = None
 
 
+class TransportRouteOverlayRequest(BaseModel):
+    route_overlay: TransportMapRequest | None = None
+
+
+class TransportRouteOverlayResponse(BaseModel):
+    route: dict[str, Any]
+    view: dict[str, float] | None = None
+
+
 class TransportRouteRequest(BaseModel):
     """Either stop endpoints (from_stop_id + to_stop_id) or station endpoints (from_station_id + to_station_id)."""
 
@@ -194,6 +203,34 @@ class AgentTransportRouteResponse(BaseModel):
     result: dict[str, Any]
     graph3d: dict[str, Any] | None = None
     shell_queued: int = 0
+
+
+class AgentPlaceLookupRequest(BaseModel):
+    query: str = Field(..., min_length=2)
+    kind: Literal["auto", "station", "poi"] = "auto"
+    near_query: str | None = None
+    topic: Literal["about", "history", "hours", "accessibility", "disruptions", "reviews"] | None = "about"
+    includes_today: bool = False
+    mode: Literal["all", "metro", "rail", "tram", "bus", "other"] = "metro"
+    use_lcc: bool = True
+    station_first: bool = True
+
+
+class AgentPlaceLookupResponse(BaseModel):
+    ok: bool
+    place_kind: str | None = None
+    query: str | None = None
+    near_query: str | None = None
+    topic: str | None = None
+    local: dict[str, Any] | None = None
+    local_summary: str | None = None
+    idfm_summary: str | None = None
+    idfm_data: dict[str, Any] | None = None
+    enrichment_source: str | None = None
+    web_search_query: str | None = None
+    needs_clarification: bool = False
+    error: str | None = None
+    candidates: list[dict[str, Any]] | None = None
 
 
 class TransportExploreAreaRequest(BaseModel):

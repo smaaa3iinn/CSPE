@@ -7,6 +7,8 @@ from backend.product_shell.schemas import (
     TransportMapResponse,
     TransportExplorationOverlayRequest,
     TransportExplorationOverlayResponse,
+    TransportRouteOverlayRequest,
+    TransportRouteOverlayResponse,
     TransportGraph3DSessionRequest,
     TransportGraph3DSessionResponse,
     TransportGraph3DSyncPeekResponse,
@@ -21,7 +23,7 @@ from backend.product_shell import transport_exploration as tex
 from backend.product_shell import ui_transport_logger as ui_log
 from backend.product_shell.routers import shell as shell_router
 from backend.product_shell.schemas import TransportExploreAreaRequest
-from backend.product_shell.services import agent_store, agent_tools
+from backend.product_shell.services import agent_store, agent_tools, warmup
 from src.core.project_logs import log_compact_line
 
 router = APIRouter(tags=["transport"])
@@ -58,6 +60,7 @@ def get_bundle_health() -> dict:
             "ok": True,
             "cache_version": b.get("cache_version"),
             "modes": list((b.get("graphs") or {}).keys()),
+            "warmup": warmup.warmup_status(),
         }
     except Exception as e:
         return {"ok": False, "error": str(e)}
@@ -103,6 +106,20 @@ def post_transport_map(body: TransportMapRequest) -> TransportMapResponse:
     except RuntimeError as e:
         log_compact_line(f"[Exploration] map_render failed err={e!r}")
         raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:
+        log_compact_line(
+            "[Transport] map_render failed "
+            f"mode={body.mode} graph_viz={body.graph_viz_mode} "
+            f"path_stop_count={len(body.path_stop_ids or [])} "
+            f"path_station_count={len(body.path_station_ids or [])} err={e!r}"
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Map render failed. The current route or selection may not be valid "
+                "for the selected transport mode; clear the route and try again."
+            ),
+        ) from e
 
 
 @router.post("/transport/map/exploration-overlay", response_model=TransportExplorationOverlayResponse)
@@ -130,6 +147,34 @@ def post_transport_exploration_overlay(body: TransportExplorationOverlayRequest)
         exploration=payload["exploration"],
         view=payload.get("view"),
     )
+
+
+@router.post("/transport/map/route-overlay", response_model=TransportRouteOverlayResponse)
+def post_transport_route_overlay(body: TransportRouteOverlayRequest) -> TransportRouteOverlayResponse:
+    overlay = body.route_overlay
+    if overlay is None:
+        return TransportRouteOverlayResponse(
+            route={
+                "path": {"type": "FeatureCollection", "features": []},
+                "station_network_points": {"type": "FeatureCollection", "features": []},
+                "station_network_lines": {"type": "FeatureCollection", "features": []},
+                "selected_stop_id": None,
+                "selected_station_id": None,
+                "path_stop_count": 0,
+                "path_station_count": 0,
+            },
+            view=None,
+        )
+    payload = te.build_transport_route_overlay(
+        mode=overlay.mode,
+        use_lcc=overlay.use_lcc,
+        graph_viz_mode=overlay.graph_viz_mode,
+        path_stop_ids=overlay.path_stop_ids,
+        path_station_ids=overlay.path_station_ids,
+        selected_stop_id=overlay.selected_stop_id,
+        selected_station_id=overlay.selected_station_id,
+    )
+    return TransportRouteOverlayResponse(route=payload["route"], view=payload.get("view"))
 
 
 @router.post("/transport/graph3d/session", response_model=TransportGraph3DSessionResponse)

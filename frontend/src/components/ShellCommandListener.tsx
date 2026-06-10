@@ -12,21 +12,33 @@ import {
   registerGraph3dSyncClientId,
 } from "../transport/graph3dSync";
 
-const POLL_MS = 600;
-const USE_SHELL_SSE = import.meta.env.VITE_SHELL_SSE === "1";
+const POLL_MS = 300;
+const USE_SHELL_SSE = import.meta.env.VITE_SHELL_SSE !== "0";
+
+function clearTransportRouteState() {
+  const s = useAppStore.getState();
+  s.setTransportPathIds(null);
+  s.setTransportStationPathIds(null);
+  s.setTransportRouteLegs(null);
+  s.setTransportRouteMeta(null);
+  s.setTransportRouteError(null);
+}
+
+function clearTransportExplorationState() {
+  useAppStore.getState().setTransportExploration(null);
+}
 
 function enqueueAtlasTransportAction(spec: AtlasTransportActionSpec) {
   const s = useAppStore.getState();
   const fp = transportActionSpecFingerprint(spec);
-  const pending = s.atlasTransportAction;
+  const pending = s.atlasTransportActions[s.atlasTransportActions.length - 1];
   // Same center can repeat across follow-up explore turns (stops → POIs → filter).
   if (pending && transportActionSpecFingerprint(pending.spec) === fp && spec.run !== "exploration_map") {
     return;
   }
-  const nextSeq = (pending?.seq ?? 0) + 1;
+  const payload = s.enqueueAtlasTransportAction(spec);
   // eslint-disable-next-line no-console
-  console.info("[atlas_transport] action enqueued", { seq: nextSeq, spec });
-  s.setAtlasTransportAction({ seq: nextSeq, spec });
+  console.info("[atlas_transport] action enqueued", { seq: payload.seq, spec });
 }
 
 function applyOne(raw: Record<string, unknown>, navigate: ReturnType<typeof useNavigate>) {
@@ -48,15 +60,28 @@ function applyOne(raw: Record<string, unknown>, navigate: ReturnType<typeof useN
     case "transport_graph_mode": {
       const gm = raw.graph_mode;
       if (gm === "all" || gm === "metro" || gm === "rail" || gm === "tram" || gm === "bus" || gm === "other") {
-        useAppStore.getState().setTransportGraphMode(gm);
+        const s = useAppStore.getState();
+        if (s.transportGraphMode !== gm) {
+          clearTransportRouteState();
+        }
+        s.setTransportGraphMode(gm);
       }
       break;
     }
     case "transport_options": {
       const s = useAppStore.getState();
+      const routeContextChanged =
+        (typeof raw.use_lcc === "boolean" && raw.use_lcc !== s.transportUseLcc) ||
+        ((raw.graph_viz === "stop" || raw.graph_viz === "station" || raw.graph_viz === "hybrid") &&
+          raw.graph_viz !== s.transportGraphViz);
+      if (routeContextChanged) {
+        clearTransportRouteState();
+      }
       if (typeof raw.use_lcc === "boolean") s.setTransportUseLcc(raw.use_lcc);
       const vz = raw.viz;
-      if (vz === "geographic" || vz === "network_3d") s.setTransportViz(vz);
+      if (vz === "geographic" || vz === "network_3d" || vz === "graph3d") {
+        s.setTransportViz(vz);
+      }
       const gv = raw.graph_viz;
       if (gv === "stop" || gv === "station" || gv === "hybrid") s.setTransportGraphViz(gv);
       if (typeof raw.show_transfers === "boolean") s.setTransportShowTransfers(raw.show_transfers);
@@ -95,7 +120,7 @@ function applyOne(raw: Record<string, unknown>, navigate: ReturnType<typeof useN
     case "transport_graph3d_sync": {
       const s = useAppStore.getState();
       s.setMode("transport");
-      s.setTransportViz("network_3d");
+      s.setTransportViz("graph3d");
       if (typeof raw.sync_client_id === "string" && raw.sync_client_id.trim()) {
         registerGraph3dSyncClientId(raw.sync_client_id);
       }
@@ -126,12 +151,30 @@ function applyOne(raw: Record<string, unknown>, navigate: ReturnType<typeof useN
       if ("route_meta" in raw) {
         s.setTransportRouteMeta(raw.route_meta === null ? null : String(raw.route_meta));
       }
+      if (Array.isArray(raw.route_legs)) {
+        s.setTransportRouteLegs(raw.route_legs as Parameters<typeof s.setTransportRouteLegs>[0]);
+      } else if (raw.route_legs === null || raw.clear_paths === true) {
+        s.setTransportRouteLegs(null);
+      }
       break;
     }
     case "atlas_transport_action": {
       const specRaw = raw.spec;
       if (!specRaw || typeof specRaw !== "object" || Array.isArray(specRaw)) break;
       const spec = normalizeAtlasTransportSpec(specRaw as Record<string, unknown>);
+      if (
+        spec.run === "route" ||
+        spec.run === "compute" ||
+        spec.graph_mode !== undefined ||
+        spec.use_lcc !== undefined ||
+        spec.graph_viz !== undefined ||
+        spec.routing_scope !== undefined
+      ) {
+        clearTransportRouteState();
+      }
+      if (spec.run === "route" || spec.run === "compute") {
+        clearTransportExplorationState();
+      }
       enqueueAtlasTransportAction(spec);
       break;
     }
@@ -145,6 +188,8 @@ function applyOne(raw: Record<string, unknown>, navigate: ReturnType<typeof useN
         to_query: to_q,
         run: "route",
       });
+      clearTransportRouteState();
+      clearTransportExplorationState();
       break;
     }
     case "memory_project": {

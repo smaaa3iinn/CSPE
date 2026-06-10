@@ -4,7 +4,7 @@ import { useAppStore } from "../store";
 export type TransportViewContext = {
   graphMode: ReturnType<typeof useAppStore.getState>["transportGraphMode"];
   useLcc: boolean;
-  viz: "geographic" | "network_3d";
+  viz: "geographic" | "network_3d" | "graph3d";
   graphViz: "stop" | "station" | "hybrid";
   pathIds: string[] | null;
   pathStationIds: string[] | null;
@@ -74,7 +74,7 @@ export function buildTransportMapBody(
   const mapBody: Record<string, unknown> = {
     mode: ctx.graphMode,
     use_lcc: ctx.useLcc,
-    viz_mode: ctx.viz,
+    viz_mode: ctx.viz === "graph3d" ? "geographic" : ctx.viz,
     graph_viz_mode: ctx.graphViz,
     path_stop_ids: ctx.pathIds,
     show_transfers: ctx.showTransfers,

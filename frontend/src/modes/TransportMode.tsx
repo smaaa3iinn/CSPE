@@ -5,6 +5,7 @@ import {
   postShellClientLog,
   postTransportExplorationOverlay,
   postTransportMap,
+  postTransportRouteOverlay,
   searchStops,
   type TransportSearchMatch,
 } from "../api/client";
@@ -21,9 +22,10 @@ import {
   pushGraph3dViewSync,
 } from "../transport/graph3dSync";
 import { createMapRefreshScheduler, type MapRefreshOpts } from "../transport/mapRefreshScheduler";
-import type { ExplorationMapPayload } from "../transport/mapExplorationBridge";
+import type { ExplorationMapPayload, RouteMapPayload } from "../transport/mapExplorationBridge";
 import {
   postExplorationToMapIframe,
+  postRouteToMapIframe,
   subscribeMapIframeMessages,
 } from "../transport/mapExplorationBridge";
 import type { AtlasTransportActionSpec } from "../transport/atlasTransportTypes";
@@ -31,7 +33,6 @@ import { specKeysProvided } from "../transport/atlasTransportTypes";
 import {
   buildTransportBaseMapBody,
   buildTransportExplorationOverlayBody,
-  buildTransportMapBody,
   readTransportViewContext,
   transportViewFingerprint,
 } from "../transport/transportViewState";
@@ -83,8 +84,8 @@ export function TransportMode() {
   const mapReadyGeneration = useRef(-1);
   const pendingExplorationRef = useRef<ExplorationMapPayload | null>(null);
   const lastExplorationPayloadRef = useRef<ExplorationMapPayload | null>(null);
+  const lastRoutePayloadRef = useRef<RouteMapPayload | null>(null);
   const pendingDeliveryTimersRef = useRef<number[]>([]);
-  const explorationFallbackTimerRef = useRef<number | null>(null);
   const prevGraphViz = useRef<string | null>(null);
 
   const [qStart, setQStart] = useState("");
@@ -136,9 +137,10 @@ export function TransportMode() {
 
   const stationFirst = graphViz === "station";
 
-  const atlasTransportAction = useAppStore((s) => s.atlasTransportAction);
-  const setAtlasTransportAction = useAppStore((s) => s.setAtlasTransportAction);
+  const atlasTransportActions = useAppStore((s) => s.atlasTransportActions);
+  const completeAtlasTransportAction = useAppStore((s) => s.completeAtlasTransportAction);
   const transportMapFocus = useAppStore((s) => s.transportMapFocus);
+  const processingActionSeqRef = useRef<number | null>(null);
 
   const autocompleteQ = dockTab === "search" ? stopLookupQ : searchQ;
 
@@ -153,6 +155,11 @@ export function TransportMode() {
     return postExplorationToMapIframe(mapIframeRef.current, payload);
   }, []);
 
+  const deliverRoutePayload = useCallback((payload: RouteMapPayload | null) => {
+    lastRoutePayloadRef.current = payload;
+    return postRouteToMapIframe(mapIframeRef.current, payload);
+  }, []);
+
   const clearPendingDeliveryTimers = useCallback(() => {
     for (const id of pendingDeliveryTimersRef.current) {
       window.clearTimeout(id);
@@ -160,16 +167,8 @@ export function TransportMode() {
     pendingDeliveryTimersRef.current = [];
   }, []);
 
-  const clearExplorationFallbackWatchdog = useCallback(() => {
-    if (explorationFallbackTimerRef.current !== null) {
-      window.clearTimeout(explorationFallbackTimerRef.current);
-      explorationFallbackTimerRef.current = null;
-    }
-  }, []);
-
   const tryDeliverPendingExploration = useCallback((reason: string): boolean => {
-    const pending =
-      pendingExplorationRef.current ?? lastExplorationPayloadRef.current;
+    const pending = pendingExplorationRef.current;
     if (!pending) return false;
     const posted = postExplorationToMapIframe(mapIframeRef.current, pending);
     if (posted) {
@@ -204,10 +203,6 @@ export function TransportMode() {
   );
 
   const scheduleBaseMapRefreshRef = useRef<(opts?: MapRefreshOpts) => void>(() => {});
-  const scheduleExplorationFallbackWatchdogRef = useRef<(fetchId: number) => void>(() => {});
-  const executeExplorationMapRefreshRef = useRef<
-    (opts?: MapRefreshOpts) => Promise<void>
-  >(async () => {});
 
   const executeBaseMapRefresh = useCallback(async (opts?: MapRefreshOpts) => {
       const fetchId = ++mapFetchSeq.current;
@@ -252,84 +247,10 @@ export function TransportMode() {
       }
     }, []);
 
-  /** Full map HTML with exploration layers baked in (reliable; used when patch delivery fails). */
-  const executeExplorationMapRefresh = useCallback(async (opts?: MapRefreshOpts) => {
-    const fetchId = ++mapFetchSeq.current;
-    const selStop =
-      opts && "selectedStopId" in opts ? opts.selectedStopId ?? null : mapSelectedStopIdRef.current;
-    const selStation =
-      opts && "selectedStationId" in opts
-        ? opts.selectedStationId ?? null
-        : mapSelectedStationIdRef.current;
-    setLoadingMap(true);
-    setMapErr(null);
-    try {
-      const ctx = readTransportViewContext();
-      const mapBody = buildTransportMapBody(ctx, {
-        selectedStopId: selStop,
-        selectedStationId: selStation,
-      });
-      const hasOverlay = Boolean(mapBody.exploration_overlay);
-      const { html } = await postTransportMap(mapBody);
-      if (fetchId !== mapFetchSeq.current) {
-        if (hasOverlay) {
-          void postShellClientLog("exploration_map_refresh", {
-            phase: "stale",
-            fetch_id: fetchId,
-            current_id: mapFetchSeq.current,
-          });
-        }
-        return;
-      }
-      if (!html || html.trim().length < 32) {
-        throw new Error("Map response was empty");
-      }
-      mapBaseGeneration.current += 1;
-      mapReadyGeneration.current = -1;
-      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const prior = prevUrl.current;
-      prevUrl.current = url;
-      setMapUrl(url);
-      if (prior) {
-        window.setTimeout(() => URL.revokeObjectURL(prior), 4000);
-      }
-      if (hasOverlay) {
-        pendingExplorationRef.current = null;
-        clearExplorationFallbackWatchdog();
-        clearPendingDeliveryTimers();
-        const exp = useAppStore.getState().transportExploration;
-        void postShellClientLog("exploration_map_refresh", {
-          phase: "full_reload_done",
-          fetch_id: fetchId,
-          html_bytes: html.length,
-          stop_count: exp?.nearby_stops?.length ?? 0,
-          poi_count: exp?.nearby_pois?.length ?? 0,
-          radius_m: exp?.radius_m ?? null,
-          stale: false,
-        });
-      }
-    } catch (e) {
-      if (fetchId !== mapFetchSeq.current) return;
-      const errMsg = e instanceof Error ? e.message : "Map failed";
-      void postShellClientLog("exploration_map_refresh", {
-        phase: "error",
-        fetch_id: fetchId,
-        error: errMsg,
-      });
-      setMapErr(errMsg);
-    } finally {
-      if (fetchId === mapFetchSeq.current) {
-        setLoadingMap(false);
-      }
-    }
-  }, []);
-
   const applyExplorationOverlay = useCallback(async () => {
     const fetchId = ++explorationFetchSeq.current;
     const overlayBody = buildTransportExplorationOverlayBody();
     if (!overlayBody) {
-      clearExplorationFallbackWatchdog();
       clearPendingDeliveryTimers();
       deliverExplorationPayload(null);
       return;
@@ -344,11 +265,16 @@ export function TransportMode() {
       }
 
       const posted = deliverExplorationPayload(payload);
-      schedulePendingExplorationDelivery(fetchId);
 
       const hasIframe = Boolean(mapIframeRef.current?.contentWindow);
       const genReady =
         mapReadyGeneration.current === mapBaseGeneration.current && hasIframe;
+      if (posted && genReady) {
+        pendingExplorationRef.current = null;
+        clearPendingDeliveryTimers();
+      } else {
+        schedulePendingExplorationDelivery(fetchId);
+      }
 
       if (!hasIframe && !loadingMapRef.current) {
         scheduleBaseMapRefreshRef.current();
@@ -366,21 +292,15 @@ export function TransportMode() {
           : 0,
         poi_count: overlayBody.nearby_pois ? (overlayBody.nearby_pois as unknown[]).length : 0,
       });
-
-      if (!posted || !genReady) {
-        scheduleExplorationFallbackWatchdogRef.current(fetchId);
-      }
-    } catch {
+    } catch (e) {
       void postShellClientLog("exploration_map_refresh", {
-        phase: "fallback_full_reload",
+        phase: "overlay_error",
         fetch_id: fetchId,
-        reason: "overlay_fetch_failed",
+        error: e instanceof Error ? e.message : "overlay fetch failed",
         map_base_gen: mapBaseGeneration.current,
       });
-      await executeExplorationMapRefreshRef.current();
     }
   }, [
-    clearExplorationFallbackWatchdog,
     clearPendingDeliveryTimers,
     deliverExplorationPayload,
     schedulePendingExplorationDelivery,
@@ -388,7 +308,6 @@ export function TransportMode() {
 
   const executeBaseMapRefreshRef = useRef(executeBaseMapRefresh);
   executeBaseMapRefreshRef.current = executeBaseMapRefresh;
-  executeExplorationMapRefreshRef.current = executeExplorationMapRefresh;
   const applyExplorationOverlayRef = useRef(applyExplorationOverlay);
   applyExplorationOverlayRef.current = applyExplorationOverlay;
 
@@ -404,30 +323,6 @@ export function TransportMode() {
   }, []);
   scheduleBaseMapRefreshRef.current = scheduleBaseMapRefresh;
 
-  const scheduleExplorationFallbackWatchdog = useCallback(
-    (fetchId: number) => {
-      clearExplorationFallbackWatchdog();
-      explorationFallbackTimerRef.current = window.setTimeout(() => {
-        if (fetchId !== explorationFetchSeq.current) {
-          return;
-        }
-        if (!pendingExplorationRef.current && !lastExplorationPayloadRef.current) {
-          return;
-        }
-        void postShellClientLog("exploration_map_refresh", {
-          phase: "fallback_full_reload",
-          fetch_id: fetchId,
-          reason: "delivery_watchdog",
-          map_base_gen: mapBaseGeneration.current,
-          map_ready_gen: mapReadyGeneration.current,
-        });
-        void executeExplorationMapRefreshRef.current();
-      }, 12000);
-    },
-    [clearExplorationFallbackWatchdog],
-  );
-  scheduleExplorationFallbackWatchdogRef.current = scheduleExplorationFallbackWatchdog;
-
   const scheduleExplorationOverlay = useCallback(() => {
     explorationSchedulerRef.current.schedule();
   }, []);
@@ -439,40 +334,95 @@ export function TransportMode() {
     return subscribeMapIframeMessages((msg) => {
       if (msg.type === "cspe-map-exploration-applied") {
         pendingExplorationRef.current = null;
-        clearExplorationFallbackWatchdog();
         clearPendingDeliveryTimers();
         return;
       }
       if (msg.type !== "cspe-map-ready") return;
       mapReadyGeneration.current = mapBaseGeneration.current;
+      if (lastRoutePayloadRef.current) {
+        postRouteToMapIframe(mapIframeRef.current, lastRoutePayloadRef.current);
+      }
+      if (!pendingExplorationRef.current && lastExplorationPayloadRef.current) {
+        postExplorationToMapIframe(mapIframeRef.current, lastExplorationPayloadRef.current);
+      }
       tryDeliverPendingExploration("map_ready");
-      schedulePendingExplorationDelivery();
+      if (pendingExplorationRef.current) {
+        schedulePendingExplorationDelivery();
+      }
     });
   }, [
-    clearExplorationFallbackWatchdog,
     clearPendingDeliveryTimers,
     schedulePendingExplorationDelivery,
     tryDeliverPendingExploration,
   ]);
 
-  useEffect(() => {
-    if (!mapUrl) return;
-    schedulePendingExplorationDelivery();
-  }, [mapUrl, schedulePendingExplorationDelivery]);
+  const showMapbox = viz === "geographic" || viz === "network_3d";
+  const showGraph3d = viz === "graph3d";
 
   useEffect(() => {
-    if (viz === "network_3d") return;
+    if (!mapUrl) return;
+    const exp = useAppStore.getState().transportExploration;
+    if (showMapbox && exp && !lastExplorationPayloadRef.current) {
+      scheduleExplorationOverlay();
+      return;
+    }
+    schedulePendingExplorationDelivery();
+  }, [mapUrl, scheduleExplorationOverlay, schedulePendingExplorationDelivery, showMapbox]);
+
+  useEffect(() => {
+    if (!showMapbox) return;
     scheduleBaseMapRefresh();
   }, [
     graphMode,
     useLcc,
     viz,
     graphViz,
-    pathIds,
-    pathStationIds,
     showTransfers,
     mapSelectedStopId,
     mapSelectedStationId,
+    scheduleBaseMapRefresh,
+  ]);
+
+  useEffect(() => {
+    if (!showMapbox) return;
+    void (async () => {
+      const ctx = readTransportViewContext();
+      const hasRoute = Boolean(
+        (ctx.pathIds && ctx.pathIds.length > 0) ||
+          (ctx.pathStationIds && ctx.pathStationIds.length > 0),
+      );
+      if (!hasRoute) {
+        deliverRoutePayload(null);
+        return;
+      }
+      try {
+        const payload = await postTransportRouteOverlay({
+          route_overlay: buildTransportBaseMapBody(ctx),
+        });
+        deliverRoutePayload(payload);
+        void postShellClientLog("route_map_refresh", {
+          phase: "overlay_done",
+          path_stop_count: ctx.pathIds?.length ?? 0,
+          path_station_count: ctx.pathStationIds?.length ?? 0,
+        });
+      } catch (e) {
+        void postShellClientLog("route_map_refresh", {
+          phase: "overlay_error",
+          error: e instanceof Error ? e.message : "route overlay failed",
+        });
+        scheduleBaseMapRefresh();
+      }
+    })();
+  }, [
+    showMapbox,
+    graphMode,
+    useLcc,
+    graphViz,
+    pathIds,
+    pathStationIds,
+    mapSelectedStopId,
+    mapSelectedStationId,
+    deliverRoutePayload,
     scheduleBaseMapRefresh,
   ]);
 
@@ -492,17 +442,18 @@ export function TransportMode() {
   }, []);
 
   useEffect(() => {
-    if (viz !== "network_3d") return;
+    if (!showGraph3d) return;
     void loadGraph3dViewer();
-  }, [viz, loadGraph3dViewer]);
+  }, [showGraph3d, loadGraph3dViewer]);
 
   const lastExplorationMapSeq = useRef(0);
   useEffect(() => {
     if (transportExplorationSeq < 1) return;
+    if (!showMapbox) return;
     if (transportExplorationSeq === lastExplorationMapSeq.current) return;
     lastExplorationMapSeq.current = transportExplorationSeq;
     scheduleExplorationOverlay();
-  }, [transportExplorationSeq, scheduleExplorationOverlay]);
+  }, [transportExplorationSeq, scheduleExplorationOverlay, showMapbox]);
 
   const lastMapFocusSeq = useRef(0);
   useEffect(() => {
@@ -533,14 +484,14 @@ export function TransportMode() {
       return;
     }
     prevGraphViz.current = graphViz;
-    if (viz !== "network_3d") {
+    if (showMapbox) {
       scheduleMapRefresh();
     }
-  }, [graphViz, scheduleMapRefresh, viz]);
+  }, [graphViz, scheduleMapRefresh, showMapbox]);
 
   const lastViewFingerprint = useRef<string | null>(null);
   useEffect(() => {
-    if (viz !== "network_3d") return;
+    if (!showGraph3d) return;
     const fp = transportViewFingerprint(readTransportViewContext());
     if (lastViewFingerprint.current === fp) {
       return;
@@ -574,7 +525,7 @@ export function TransportMode() {
       }
     };
   }, [
-    viz,
+    showGraph3d,
     graphMode,
     useLcc,
     graphViz,
@@ -681,6 +632,7 @@ export function TransportMode() {
   function clearRoute() {
     setPathIds(null);
     setStationPathIds(null);
+    setRouteLegs(null);
     setStartId(null);
     setEndId(null);
     setQStart("");
@@ -690,7 +642,41 @@ export function TransportMode() {
     setGraph3dErr(null);
   }
 
+  function clearRouteOverlay() {
+    setPathIds(null);
+    setStationPathIds(null);
+    setRouteLegs(null);
+    setRouteMeta(null);
+    setRouteErr(null);
+  }
+
+  function clearTransportUi() {
+    clearRoute();
+    setTransportExploration(null);
+    setMapSelection({ stopId: null, stationId: null });
+    setStopLookupQ("");
+    setStopLookupErr(null);
+    setSuggestions([]);
+    deliverExplorationPayload(null);
+    setDockTab("route");
+    void scheduleMapRefreshRef.current({ selectedStopId: null, selectedStationId: null });
+  }
+
   function applyAtlasTransportPatches(spec: AtlasTransportActionSpec) {
+    const current = useAppStore.getState();
+    const routeContextChanged =
+      (spec.graph_mode !== undefined && spec.graph_mode !== current.transportGraphMode) ||
+      (spec.use_lcc !== undefined && spec.use_lcc !== current.transportUseLcc) ||
+      (spec.graph_viz !== undefined && spec.graph_viz !== current.transportGraphViz) ||
+      (spec.routing_scope !== undefined &&
+        spec.graph_viz === undefined &&
+        (spec.routing_scope === "station" ? "station" : "stop") !== current.transportGraphViz);
+    if (routeContextChanged && spec.run !== "none") {
+      clearRouteOverlay();
+    }
+    if (spec.run === "route" || spec.run === "compute") {
+      setTransportExploration(null);
+    }
     if (spec.open_app_mode === "transport") setMode("transport");
     if (spec.graph_mode !== undefined) setGraphMode(spec.graph_mode);
     if (spec.use_lcc !== undefined) setUseLcc(spec.use_lcc);
@@ -709,14 +695,23 @@ export function TransportMode() {
   }
 
   useEffect(() => {
-    const action = atlasTransportAction;
+    const action = atlasTransportActions[0];
     if (!action) return;
     const { seq: mySeq, spec } = action;
-    if (wasTransportActionProcessed(mySeq)) return;
+    if (processingActionSeqRef.current === mySeq) return;
+    if (wasTransportActionProcessed(mySeq)) {
+      completeAtlasTransportAction(mySeq);
+      return;
+    }
+    processingActionSeqRef.current = mySeq;
     markTransportActionProcessed(mySeq);
-    setAtlasTransportAction(null);
 
-    let cancelled = false;
+    const finishAction = () => {
+      if (processingActionSeqRef.current === mySeq) {
+        processingActionSeqRef.current = null;
+      }
+      completeAtlasTransportAction(mySeq);
+    };
     const uiSnap = localUiRef.current;
 
     const keys = specKeysProvided(spec);
@@ -765,26 +760,40 @@ export function TransportMode() {
 
     const run = spec.run;
     if (!run || run === "none") {
+      finishAction();
       return;
     }
 
     if (run === "reset_route") {
       clearRoute();
       void postShellClientLog("atlas_transport_trigger", { seq: mySeq, trigger: "reset_route" });
+      finishAction();
+      return;
+    }
+    if (run === "clear_transport_ui") {
+      clearTransportUi();
+      void postShellClientLog("atlas_transport_trigger", {
+        seq: mySeq,
+        trigger: "clear_transport_ui",
+      });
+      finishAction();
       return;
     }
     if (run === "compute") {
       void postShellClientLog("atlas_transport_trigger", { seq: mySeq, trigger: "compute" });
       void (async () => {
-        await computeRoute();
+        try {
+          await computeRoute();
+        } finally {
+          finishAction();
+        }
       })();
-      return () => {
-        cancelled = true;
-      };
+      return;
     }
     if (run === "refresh_map") {
       void scheduleMapRefreshRef.current();
       void postShellClientLog("atlas_transport_trigger", { seq: mySeq, trigger: "refresh_map" });
+      finishAction();
       return;
     }
     if (run === "clear_map_highlight") {
@@ -793,6 +802,7 @@ export function TransportMode() {
       setStopLookupQ("");
       void scheduleMapRefreshRef.current({ selectedStopId: null, selectedStationId: null });
       void postShellClientLog("atlas_transport_trigger", { seq: mySeq, trigger: "clear_map_highlight" });
+      finishAction();
       return;
     }
 
@@ -835,10 +845,16 @@ export function TransportMode() {
           stops: exp?.nearby_stops?.length ?? 0,
           pois: exp?.nearby_pois?.length ?? 0,
         });
+        if (showMapbox) {
+          if (exp) {
+            scheduleExplorationOverlay();
+          } else {
+            void scheduleExplorationOverlay();
+          }
+        }
+        finishAction();
       })();
-      return () => {
-        cancelled = true;
-      };
+      return;
     }
 
     if (run === "search_map") {
@@ -851,6 +867,7 @@ export function TransportMode() {
         const q = (qRaw ?? "").trim();
         if (q.length < 2) {
           setStopLookupErr("Type at least 2 characters.");
+          finishAction();
           return;
         }
         setStopLookupErr(null);
@@ -867,6 +884,7 @@ export function TransportMode() {
               ok: false,
               matches: 0,
             });
+            finishAction();
             return;
           }
           if (sf && first.station_id) {
@@ -892,11 +910,11 @@ export function TransportMode() {
         } catch {
           setStopLookupErr("Search failed.");
           void postShellClientLog("atlas_transport_trigger", { seq: mySeq, trigger: "search_map", ok: false });
+        } finally {
+          finishAction();
         }
       })();
-      return () => {
-        cancelled = true;
-      };
+      return;
     }
 
     if (run === "route") {
@@ -932,7 +950,6 @@ export function TransportMode() {
         setSuggestions([]);
 
         const fromSearch = await searchStops(fromQ, gm, ulcc, stationFirstIv);
-        if (cancelled) return;
 
         const fromRes = resolveEndpointFromMatches(fromQ, fromSearch.matches, stationFirstIv);
         void postShellClientLog("from_resolved", {
@@ -963,7 +980,6 @@ export function TransportMode() {
         setRouteFocus("end");
 
         const toSearch = await searchStops(toQ, gm, ulcc, stationFirstIv);
-        if (cancelled) return;
 
         const toRes = resolveEndpointFromMatches(toQ, toSearch.matches, stationFirstIv);
         void postShellClientLog("to_resolved", {
@@ -1011,7 +1027,6 @@ export function TransportMode() {
 
         try {
           const r = await postRoute(gm, ulcc, routePayload);
-          if (cancelled) return;
           void postShellClientLog("ui_route_result", {
             seq: mySeq,
             ok: r.ok,
@@ -1048,14 +1063,14 @@ export function TransportMode() {
         }
         } finally {
           atlasRouteProcessingRef.current = false;
+          finishAction();
         }
       })();
+      return;
     }
 
-    return () => {
-      cancelled = true;
-    };
-  }, [atlasTransportAction, setAtlasTransportAction]);
+    finishAction();
+  }, [atlasTransportActions, completeAtlasTransportAction]);
 
   async function searchStopOnMap() {
     setStopLookupErr(null);
@@ -1105,7 +1120,7 @@ export function TransportMode() {
       className={`transport-root${mapChromeHidden ? " transport-root--chrome-hidden" : ""}`}
     >
       <div className="transport-map-wrap">
-        {viz === "network_3d" ? (
+        {showGraph3d ? (
           <>
             {launchingGraph3d && !graph3dViewerUrl && (
               <div className="transport-map-loading">Loading 3D graph…</div>
@@ -1140,6 +1155,9 @@ export function TransportMode() {
                 title="Transport map"
                 src={mapUrl}
                 onLoad={() => {
+              if (lastRoutePayloadRef.current) {
+                postRouteToMapIframe(mapIframeRef.current, lastRoutePayloadRef.current);
+              }
                   schedulePendingExplorationDelivery();
                 }}
               />
@@ -1163,11 +1181,25 @@ export function TransportMode() {
               type="button"
               className={`transport-btn-viz${viz === "network_3d" ? " active" : ""}`}
               onClick={() => setViz("network_3d")}
+              title="Mapbox map with pitch and 3D buildings"
             >
-              3D/VR graph
+              3D map
+            </button>
+            <button
+              type="button"
+              className={`transport-btn-viz${viz === "graph3d" ? " active" : ""}`}
+              onClick={() => setViz("graph3d")}
+              disabled={launchingGraph3d}
+              title={
+                pathIds && pathIds.length > 0
+                  ? "Network graph in 3D/VR (GraphXR)"
+                  : "Network graph in 3D/VR (GraphXR)"
+              }
+            >
+              {launchingGraph3d && viz === "graph3d" ? "Loading…" : "3D/VR graph"}
             </button>
           </div>
-          {graph3dErr && viz === "network_3d" && <div className="transport-route-err">{graph3dErr}</div>}
+          {graph3dErr && viz === "graph3d" && <div className="transport-route-err">{graph3dErr}</div>}
 
           <div className="transport-section-label">Graph layer</div>
           <div className="transport-pill-row">

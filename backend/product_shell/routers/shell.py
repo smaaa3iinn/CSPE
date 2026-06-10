@@ -21,6 +21,7 @@ _MAX = 256
 _lock = threading.Lock()
 _queue: deque[dict[str, Any]] = deque(maxlen=_MAX)
 _sse_subscribers: list[queue.Queue[str]] = []
+_total_enqueued = 0
 
 
 class ShellEnqueueBody(BaseModel):
@@ -29,9 +30,11 @@ class ShellEnqueueBody(BaseModel):
 
 def enqueue_commands(commands: list[dict[str, Any]]) -> int:
     """Append shell commands (used by Atlas tools and agent composite actions)."""
+    global _total_enqueued
     n = 0
     batch: list[dict[str, Any]] = []
     with _lock:
+        subs = list(_sse_subscribers)
         for c in commands:
             if isinstance(c, dict) and c.get("kind"):
                 cc = dict(c)
@@ -45,7 +48,7 @@ def enqueue_commands(commands: list[dict[str, Any]]) -> int:
                     ui_log.log_atlas_transport_action_enqueued(cc)
                 elif k == "transport_exploration_view":
                     ui_log.log_exploration_shell_enqueue(cc)
-        subs = list(_sse_subscribers)
+        _total_enqueued += n
     if batch and subs:
         payload = json.dumps({"commands": batch}, default=str)
         for q in subs:
@@ -54,6 +57,11 @@ def enqueue_commands(commands: list[dict[str, Any]]) -> int:
             except queue.Full:
                 pass
     return n
+
+
+def shell_stats() -> dict[str, Any]:
+    with _lock:
+        return {"pending": len(_queue), "total_enqueued": _total_enqueued}
 
 
 @router.post("/shell/enqueue")
@@ -84,6 +92,12 @@ def shell_poll() -> dict[str, Any]:
     return {"commands": cmds}
 
 
+@router.get("/shell/stats")
+def shell_stats_route() -> dict[str, Any]:
+    """Current shell queue counters for first-turn diagnostics."""
+    return shell_stats()
+
+
 @router.get("/shell/stream")
 def shell_stream() -> StreamingResponse:
     """Server-Sent Events stream of shell commands (alternative to polling)."""
@@ -92,6 +106,13 @@ def shell_stream() -> StreamingResponse:
         q: queue.Queue[str] = queue.Queue(maxsize=64)
         with _lock:
             _sse_subscribers.append(q)
+            if _queue:
+                pending = list(_queue)
+                _queue.clear()
+                try:
+                    q.put_nowait(json.dumps({"commands": pending}, default=str))
+                except queue.Full:
+                    pass
         try:
             yield "event: connected\ndata: {}\n\n"
             while True:

@@ -800,6 +800,62 @@ def render_transport_map_html(
     return result
 
 
+def build_transport_route_overlay(
+    *,
+    mode: str,
+    use_lcc: bool,
+    graph_viz_mode: str = "stop",
+    path_stop_ids: list[str] | None = None,
+    path_station_ids: list[str] | None = None,
+    selected_stop_id: str | None = None,
+    selected_station_id: str | None = None,
+) -> dict[str, Any]:
+    """Lightweight route payload for patching a live Mapbox iframe."""
+    from src.viz.plot_mapbox import _center_and_zoom_for_stop_path, _path_feature_collection
+
+    G = graph_for(mode, use_lcc)
+    stop_path = [str(x).strip() for x in (path_stop_ids or []) if str(x).strip()]
+    station_path = [str(x).strip() for x in (path_station_ids or []) if str(x).strip()]
+    gv = (graph_viz_mode or "stop").strip().lower()
+    if gv not in ("stop", "station", "hybrid"):
+        gv = "stop"
+
+    path_source, _path_debug = _path_feature_collection(
+        G,
+        stop_path,
+        mode,
+        _line_geometries(),
+    )
+    station_points: dict[str, Any] = {"type": "FeatureCollection", "features": []}
+    station_lines: dict[str, Any] = {"type": "FeatureCollection", "features": []}
+    if station_path and gv != "stop":
+        idx = station_layer_for(mode, use_lcc)
+        station_points, station_lines = station_path_segment_geojson(
+            idx,
+            station_path,
+            selected_station_id=(selected_station_id or "").strip() or None,
+        )
+
+    fit = _center_and_zoom_for_stop_path(G, stop_path)
+    view = None
+    if fit:
+        center, zoom = fit
+        view = {"lat": float(center["lat"]), "lon": float(center["lon"]), "zoom": float(zoom)}
+
+    return {
+        "route": {
+            "path": path_source,
+            "station_network_points": station_points,
+            "station_network_lines": station_lines,
+            "selected_stop_id": (selected_stop_id or "").strip() or None,
+            "selected_station_id": (selected_station_id or "").strip() or None,
+            "path_stop_count": len(stop_path),
+            "path_station_count": len(station_path),
+        },
+        "view": view,
+    }
+
+
 def search_stops(
     q: str,
     *,

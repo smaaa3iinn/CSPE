@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backend.product_shell import transport_exploration as tex  # noqa: E402
-from backend.product_shell.services import agent_store  # noqa: E402
+from backend.product_shell.services import agent_store, agent_tools  # noqa: E402
 
 
 class TransportExplorationValidationTests(unittest.TestCase):
@@ -48,6 +48,44 @@ class TransportExplorationValidationTests(unittest.TestCase):
         out = tex.filter_visible_results(radius_m=300)
         self.assertFalse(out.get("ok"))
         self.assertEqual(out.get("error"), "nothing_to_filter")
+
+    def test_route_shell_commands_are_server_authoritative(self):
+        cmds = agent_tools.shell_commands_for_route(
+            {
+                "from_query": "A",
+                "to_query": "B",
+                "mode": "metro",
+                "use_lcc": False,
+                "routing_scope": "station",
+                "route": {
+                    "ok": True,
+                    "path": ["stop:a", "stop:b"],
+                    "station_path": ["station:a", "station:b"],
+                    "path_legs": [{"kind": "ride", "summary": "A to B"}],
+                    "path_summary": ["A to B"],
+                    "result": {"time_s": 120, "transfers": 0},
+                },
+            }
+        )
+        action = next(c for c in cmds if c["kind"] == "atlas_transport_action")
+        self.assertEqual(action["spec"].get("run"), "none")
+        route_view = next(c for c in cmds if c["kind"] == "transport_route_view")
+        self.assertEqual(route_view["path_ids"], ["stop:a", "stop:b"])
+        self.assertEqual(route_view["station_path_ids"], ["station:a", "station:b"])
+        self.assertEqual(route_view["route_legs"][0]["summary"], "A to B")
+
+    def test_route_shell_commands_surface_server_failure(self):
+        cmds = agent_tools.shell_commands_for_route(
+            {
+                "from_query": "A",
+                "to_query": "B",
+                "route": {"ok": False},
+                "error": {"message": "Could not resolve one or both endpoints"},
+            }
+        )
+        route_view = next(c for c in cmds if c["kind"] == "transport_route_view")
+        self.assertTrue(route_view["clear_paths"])
+        self.assertEqual(route_view["route_error"], "Could not resolve one or both endpoints")
 
 
 class TransportExplorationIntegrationTests(unittest.TestCase):

@@ -8,6 +8,7 @@ export type AtlasTransportRun =
   | "search_map"
   | "exploration_map"
   | "reset_route"
+  | "clear_transport_ui"
   | "refresh_map"
   | "clear_map_highlight"
   | "none";
@@ -25,7 +26,7 @@ export type AtlasTransportActionSpec = {
   open_app_mode?: "transport";
   graph_mode?: TransportGraphModeKey;
   use_lcc?: boolean;
-  viz?: "geographic" | "network_3d";
+  viz?: "geographic" | "network_3d" | "graph3d";
   graph_viz?: "stop" | "station" | "hybrid";
   /** Applied only if `graph_viz` is omitted (maps to station/stop layers). */
   routing_scope?: "station" | "stop";
@@ -76,7 +77,9 @@ export function normalizeAtlasTransportSpec(raw: Record<string, unknown>): Atlas
     spec.graph_mode = raw.graph_mode as TransportGraphModeKey;
   }
   if (typeof raw.use_lcc === "boolean") spec.use_lcc = raw.use_lcc;
-  if (raw.viz === "geographic" || raw.viz === "network_3d") spec.viz = raw.viz;
+  if (raw.viz === "geographic" || raw.viz === "network_3d" || raw.viz === "graph3d") {
+    spec.viz = raw.viz;
+  }
   if (raw.graph_viz === "stop" || raw.graph_viz === "station" || raw.graph_viz === "hybrid") {
     spec.graph_viz = raw.graph_viz;
   }
@@ -98,6 +101,7 @@ export function normalizeAtlasTransportSpec(raw: Record<string, unknown>): Atlas
     raw.run === "search_map" ||
     raw.run === "exploration_map" ||
     raw.run === "reset_route" ||
+    raw.run === "clear_transport_ui" ||
     raw.run === "refresh_map" ||
     raw.run === "clear_map_highlight" ||
     raw.run === "none"

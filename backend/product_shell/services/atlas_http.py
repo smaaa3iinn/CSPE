@@ -12,6 +12,8 @@ from typing import Any
 
 import requests
 
+from src.core.project_logs import log_compact_line
+
 
 def atlas_base_url() -> str:
     return os.getenv("ATLAS_API_BASE", "http://127.0.0.1:5055").rstrip("/")
@@ -85,8 +87,13 @@ def send_text_and_wait(
     if not msg:
         return {}, "Empty message"
 
+    turn_t0 = time.perf_counter()
+
     # Typed messages always use Atlas text queue (/text).
+    session_t0 = time.perf_counter()
     ok, err = ensure_atlas_session_mode("text")
+    session_ms = (time.perf_counter() - session_t0) * 1000.0
+    log_compact_line(f"[Chat] atlas_session_ready ok={ok} ms={session_ms:.0f}")
     if not ok:
         return {}, err
 
@@ -99,7 +106,10 @@ def send_text_and_wait(
     p0 = _panels_signature(before.get("panels"))
 
     try:
+        post_t0 = time.perf_counter()
         tr = requests.post(f"{base}/text", json={"text": msg}, timeout=10)
+        post_ms = (time.perf_counter() - post_t0) * 1000.0
+        log_compact_line(f"[Chat] atlas_text_post status={tr.status_code} ms={post_ms:.0f}")
         if tr.status_code != 200:
             return before, f"/text failed: {tr.status_code} {tr.text[:300]}"
         tj = tr.json()
@@ -147,6 +157,8 @@ def send_text_and_wait(
 
         p1 = _panels_signature(last_ui.get("panels"))
         if p1 != p0:
+            elapsed_ms = (time.perf_counter() - turn_t0) * 1000.0
+            log_compact_line(f"[Chat] atlas_turn_ready reason=panels elapsed_ms={elapsed_ms:.0f}")
             return last_ui, None
 
         a = (last_ui.get("assistant") or "").strip()
@@ -155,10 +167,15 @@ def send_text_and_wait(
                 stable += 1
                 if stable >= stable_need:
                     last_ui = _wait_panel_settle(last_ui)
+                    elapsed_ms = (time.perf_counter() - turn_t0) * 1000.0
+                    log_compact_line(
+                        f"[Chat] atlas_turn_ready reason=assistant_stable assistant_len={len(a)} elapsed_ms={elapsed_ms:.0f}"
+                    )
                     return last_ui, None
             else:
                 stable = 0
                 last_a = a
         time.sleep(poll_s)
 
-    return last_ui, None
+    log_compact_line(f"[Chat] atlas_turn_timeout max_wait_s={max_wait_s}")
+    return last_ui, f"Atlas turn timed out after {int(max_wait_s)}s"

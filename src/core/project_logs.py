@@ -441,6 +441,7 @@ def log_turn_tool(
     args_summary: str = "",
     latency_ms: float | None = None,
     correlation_id: str | None = None,
+    sources: list[str] | None = None,
 ) -> None:
     cid = correlation_id or get_turn_correlation_id(turn_id) or ""
     line = f"[Tool] {tool_name} ok={str(ok).lower()}"
@@ -448,6 +449,10 @@ def log_turn_tool(
         line += f" {args_summary}"
     if summary:
         line += f' summary="{summary[:200]}"'
+    if sources:
+        links = [str(s).strip() for s in sources if str(s).strip()]
+        if links:
+            line += ' sources="' + " | ".join(links[:8]) + '"'
     if cid:
         line += f" correlation_id={cid}"
     log_deduped_compact(line, key=f"tool:{turn_id}:{tool_name}", ttl_s=30.0)

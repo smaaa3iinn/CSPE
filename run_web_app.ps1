@@ -367,6 +367,56 @@ function Wait-ProductShellReady {
     throw "Timeout waiting for product API with transport exploration at $BaseUrl (stale uvicorn may still own port 8787)."
 }
 
+function Wait-ProductShellWarm {
+    param(
+        [string]$BaseUrl = "http://127.0.0.1:8787",
+        [int]$MaxSeconds = 60
+    )
+    $deadline = (Get-Date).AddSeconds($MaxSeconds)
+    $nextMsg = (Get-Date).AddSeconds(5)
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $health = Invoke-RestMethod -Uri "$BaseUrl/api/health" -TimeoutSec 5 -ErrorAction Stop
+            if ($health.warmup -and $health.warmup.complete) {
+                $ok = [bool]$health.warmup.ok
+                $elapsed = $health.warmup.elapsed_ms
+                Write-Host ("  Product warmup complete ok={0} elapsed_ms={1}" -f $ok, $elapsed)
+                return
+            }
+            if ($health.warmup -and $health.warmup.running -and (Get-Date) -gt $nextMsg) {
+                $steps = @($health.warmup.steps).Count
+                Write-Host ("  ... product warmup running ({0} steps done)" -f $steps)
+                $nextMsg = (Get-Date).AddSeconds(5)
+            }
+        }
+        catch {
+            Start-Sleep -Milliseconds 500
+            continue
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    Write-Warning "Product warmup did not finish within $MaxSeconds seconds; continuing with background warmup."
+}
+
+function Warm-AtlasTextSession {
+    param(
+        [string]$BaseUrl = "http://127.0.0.1:8787"
+    )
+    try {
+        Write-Host "  Warming Atlas text session via product shell..."
+        Invoke-RestMethod -Uri "$BaseUrl/api/atlas/input-mode" `
+            -Method Post `
+            -ContentType "application/json" `
+            -Body '{"mode":"text"}' `
+            -TimeoutSec 60 `
+            -ErrorAction Stop | Out-Null
+        Write-Host "  Atlas text session warm."
+    }
+    catch {
+        Write-Warning ("Atlas text warmup failed; first chat may still wake Atlas: " + $_)
+    }
+}
+
 function Initialize-ProjectLogFiles {
     param([string]$LogDir)
 
@@ -496,6 +546,10 @@ try {
     Wait-ProductShellReady -BaseUrl "http://127.0.0.1:8787" -MaxSeconds 90 -Restart {
         $bff = Start-ProductShellProcess -PythonExe $cspePy -WorkDir $Root -Existing $bff
     }.GetNewClosure()
+    if (-not $SkipAtlas) {
+        Warm-AtlasTextSession -BaseUrl "http://127.0.0.1:8787"
+    }
+    Wait-ProductShellWarm -BaseUrl "http://127.0.0.1:8787" -MaxSeconds 60
 
     if (-not $SkipGraphXR) {
         if (-not (Test-Path -LiteralPath (Join-Path $graphxrDir 'package.json'))) {

@@ -29,6 +29,7 @@ configure_product_shell_logging()
 configure_uvicorn_loggers()
 
 from backend.product_shell.routers import agent, atlas, chat, memory, shell, spotify, transport
+from backend.product_shell.services import warmup
 
 app = FastAPI(title="CSPE Product Shell API", version="0.1.0")
 
@@ -51,6 +52,7 @@ async def _project_log_middleware(request: Request, call_next):
 @app.on_event("startup")
 def _log_product_shell_ready() -> None:
     log_startup("Product shell ready on :8787")
+    warmup.start_background_warmup()
 
 _origins = os.getenv(
     "PRODUCT_SHELL_CORS_ORIGINS",
@@ -104,4 +106,5 @@ def health() -> dict:
             "shell_sse": True,
             "transport_exploration": True,
         },
+        "warmup": warmup.warmup_status(),
     }
