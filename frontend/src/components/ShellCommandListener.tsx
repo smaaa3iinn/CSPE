@@ -13,7 +13,13 @@ import {
 } from "../transport/graph3dSync";
 
 const POLL_MS = 300;
+const POLL_BACKUP_MS = 2000;
 const USE_SHELL_SSE = import.meta.env.VITE_SHELL_SSE !== "0";
+const MAX_APPLIED_SHELL_SIGS = 512;
+
+function shellCommandSignature(raw: Record<string, unknown>): string {
+  return JSON.stringify(raw);
+}
 
 function clearTransportRouteState() {
   const s = useAppStore.getState();
@@ -88,6 +94,7 @@ function applyOne(raw: Record<string, unknown>, navigate: ReturnType<typeof useN
       break;
     }
     case "transport_exploration_view": {
+      clearTransportRouteState();
       useAppStore.getState().setMode("transport");
       const center = raw.center;
       const view: TransportExplorationView = {
@@ -108,6 +115,7 @@ function applyOne(raw: Record<string, unknown>, navigate: ReturnType<typeof useN
           : [],
       };
       useAppStore.getState().setTransportExploration(view);
+      useAppStore.getState().appendChatExploration(view);
       void postShellClientLog("exploration_view_applied", {
         stop_count: view.nearby_stops?.length ?? 0,
         poi_count: view.nearby_pois?.length ?? 0,
@@ -131,6 +139,10 @@ function applyOne(raw: Record<string, unknown>, navigate: ReturnType<typeof useN
     }
     case "transport_route_view": {
       const s = useAppStore.getState();
+      const settingRoute = Array.isArray(raw.path_ids) && raw.path_ids.length > 0;
+      if (settingRoute) {
+        clearTransportExplorationState();
+      }
       if (raw.clear_paths === true) {
         s.setTransportPathIds(null);
         s.setTransportStationPathIds(null);
@@ -218,15 +230,32 @@ export function ShellCommandListener() {
 
   useEffect(() => {
     let cancelled = false;
+    const applied = new Set<string>();
+    const appliedOrder: string[] = [];
+
+    const rememberApplied = (sig: string) => {
+      if (applied.has(sig)) return false;
+      applied.add(sig);
+      appliedOrder.push(sig);
+      if (appliedOrder.length > MAX_APPLIED_SHELL_SIGS) {
+        const drop = appliedOrder.shift();
+        if (drop) applied.delete(drop);
+      }
+      return true;
+    };
 
     const drainCommands = (cmds: unknown[]) => {
+      let appliedCount = 0;
       for (const c of cmds) {
-        if (c && typeof c === "object" && !Array.isArray(c)) {
-          applyOne(c as Record<string, unknown>, navRef.current);
-        }
+        if (!c || typeof c !== "object" || Array.isArray(c)) continue;
+        const raw = c as Record<string, unknown>;
+        const sig = shellCommandSignature(raw);
+        if (!rememberApplied(sig)) continue;
+        applyOne(raw, navRef.current);
+        appliedCount += 1;
       }
-      if (cmds.length > 0) {
-        void postAgentEvent("shell.commands_applied", { count: cmds.length });
+      if (appliedCount > 0) {
+        void postAgentEvent("shell.commands_applied", { count: appliedCount });
       }
     };
 
@@ -262,11 +291,16 @@ export function ShellCommandListener() {
     }
 
     const id = USE_SHELL_SSE ? undefined : window.setInterval(() => void tick(), POLL_MS);
+    const backupId = USE_SHELL_SSE
+      ? window.setInterval(() => void tick(), POLL_BACKUP_MS)
+      : undefined;
     if (!USE_SHELL_SSE) void tick();
+    else void tick();
 
     return () => {
       cancelled = true;
       if (id !== undefined) window.clearInterval(id);
+      if (backupId !== undefined) window.clearInterval(backupId);
       es?.close();
     };
   }, []);

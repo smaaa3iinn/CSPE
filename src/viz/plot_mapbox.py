@@ -2713,29 +2713,41 @@ def render_mapbox_gl_html(
     const EXPLORATION_SOURCE_IDS = ['exploration-center', 'exploration-stops', 'exploration-pois'];
     const explorationHoverLayers = new Set();
 
+    const postExplorationAck = () => {{
+      try {{
+        window.parent.postMessage({{ type: 'cspe-map-exploration-applied' }}, '*');
+      }} catch (error) {{
+        /* standalone preview */
+      }}
+    }};
+
     const addExplorationLabels = (sourceId, layerId, textColor, haloColor) => {{
-      map.addLayer({{
-        id: layerId,
-        type: 'symbol',
-        source: sourceId,
-        layout: {{
-          'text-field': ['get', 'label'],
-          'text-size': 10,
-          'text-offset': [0, 1.1],
-          'text-anchor': 'top',
-          'text-max-width': 7,
-          'text-line-height': 1.05,
-          'text-allow-overlap': false,
-          'text-optional': true,
-          'text-font': ['Open Sans Regular', 'Arial Unicode MS Regular']
-        }},
-        paint: {{
-          'text-color': textColor,
-          'text-halo-color': haloColor,
-          'text-halo-width': 1.2,
-          'text-halo-blur': 0.15
-        }}
-      }});
+      try {{
+        map.addLayer({{
+          id: layerId,
+          type: 'symbol',
+          source: sourceId,
+          layout: {{
+            'text-field': ['get', 'label'],
+            'text-size': 10,
+            'text-offset': [0, 1.1],
+            'text-anchor': 'top',
+            'text-max-width': 7,
+            'text-line-height': 1.05,
+            'text-allow-overlap': false,
+            'text-optional': true,
+            'text-font': ['Open Sans Regular', 'Arial Unicode MS Regular']
+          }},
+          paint: {{
+            'text-color': textColor,
+            'text-halo-color': haloColor,
+            'text-halo-width': 1.2,
+            'text-halo-blur': 0.15
+          }}
+        }});
+      }} catch (error) {{
+        /* label fonts may be unavailable in some basemap styles */
+      }}
     }};
 
     const unbindExplorationHover = (layerId) => {{
@@ -2782,12 +2794,10 @@ def render_mapbox_gl_html(
       }}
     }};
 
-    const applyExplorationOverlay = (exploration, view) => {{
-      if (!mapExplorationReady) {{
-        return;
-      }}
+    const applyExplorationOverlayNow = (exploration, view) => {{
       clearExplorationOverlay();
       if (!exploration) {{
+        postExplorationAck();
         return;
       }}
       if (exploration.center_point && exploration.center_point.features && exploration.center_point.features.length) {{
@@ -2804,25 +2814,29 @@ def render_mapbox_gl_html(
             'circle-stroke-color': '#f8fafc'
           }}
         }});
-        map.addLayer({{
-          id: 'exploration-center-label',
-          type: 'symbol',
-          source: 'exploration-center',
-          layout: {{
-            'text-field': ['get', 'label'],
-            'text-size': 11,
-            'text-offset': [0, 1.35],
-            'text-anchor': 'top',
-            'text-max-width': 8,
-            'text-allow-overlap': true,
-            'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold']
-          }},
-          paint: {{
-            'text-color': '#e0f2fe',
-            'text-halo-color': 'rgba(15,23,42,0.92)',
-            'text-halo-width': 1.4
-          }}
-        }});
+        try {{
+          map.addLayer({{
+            id: 'exploration-center-label',
+            type: 'symbol',
+            source: 'exploration-center',
+            layout: {{
+              'text-field': ['get', 'label'],
+              'text-size': 11,
+              'text-offset': [0, 1.35],
+              'text-anchor': 'top',
+              'text-max-width': 8,
+              'text-allow-overlap': true,
+              'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold']
+            }},
+            paint: {{
+              'text-color': '#e0f2fe',
+              'text-halo-color': 'rgba(15,23,42,0.92)',
+              'text-halo-width': 1.4
+            }}
+          }});
+        }} catch (error) {{
+          /* optional center label */
+        }}
         bindExplorationHover('exploration-center');
       }}
       if (exploration.stops && exploration.stops.features && exploration.stops.features.length) {{
@@ -2867,11 +2881,25 @@ def render_mapbox_gl_html(
           essential: true
         }});
       }}
-      try {{
-        window.parent.postMessage({{ type: 'cspe-map-exploration-applied' }}, '*');
-      }} catch (error) {{
-        /* standalone preview */
+      postExplorationAck();
+    }};
+
+    const applyExplorationOverlay = (exploration, view) => {{
+      if (!mapExplorationReady) {{
+        return;
       }}
+      const run = () => {{
+        try {{
+          applyExplorationOverlayNow(exploration, view);
+        }} catch (error) {{
+          postExplorationAck();
+        }}
+      }};
+      if (typeof map.isStyleLoaded === 'function' && !map.isStyleLoaded()) {{
+        map.once('idle', run);
+        return;
+      }}
+      run();
     }};
 
     const setSourceDataIfPresent = (sourceId, data) => {{
@@ -3098,6 +3126,12 @@ def render_mapbox_gl_html(
 
       flushQueuedExplorationMessages();
 
+      try {{
+        window.parent.postMessage({{ type: 'cspe-map-ready' }}, '*');
+      }} catch (error) {{
+        /* standalone preview */
+      }}
+
       map.on('mouseenter', 'stations', () => {{
         map.getCanvas().style.cursor = 'pointer';
       }});
@@ -3202,12 +3236,6 @@ def render_mapbox_gl_html(
           setClickedPois([]);
         }}
       }});
-
-      try {{
-        window.parent.postMessage({{ type: 'cspe-map-ready' }}, '*');
-      }} catch (error) {{
-        /* standalone preview */
-      }}
     }});
   </script>
 </body>

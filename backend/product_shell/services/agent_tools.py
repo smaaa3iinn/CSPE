@@ -327,6 +327,17 @@ def shell_commands_for_exploration(exploration: dict[str, Any]) -> list[dict[str
         or ""
     )
     cmds: list[dict[str, Any]] = [{"kind": "set_mode", "mode": "transport"}]
+    cmds.append(
+        {
+            "kind": "transport_route_view",
+            "clear_paths": True,
+            "path_ids": None,
+            "station_path_ids": None,
+            "route_legs": None,
+            "route_meta": None,
+            "route_error": None,
+        }
+    )
     spec: dict[str, Any] = {
         "open_app_mode": "transport",
         "run": "exploration_map",

@@ -1,15 +1,16 @@
 import { useAppStore } from "../store";
+import type { TransportExplorationView } from "../transport/atlasTransportTypes";
 
-/** Nearby stops/POIs list shown in the Atlas rail (not over the map). */
-export function TransportExplorationPanel() {
-  const transportExploration = useAppStore((s) => s.transportExploration);
+type Props = {
+  exploration: TransportExplorationView;
+};
+
+/** Nearby stops/POIs inline in the Atlas chat thread. */
+export function TransportExplorationPanel({ exploration }: Props) {
   const graphViz = useAppStore((s) => s.transportGraphViz);
   const requestTransportMapFocus = useAppStore((s) => s.requestTransportMapFocus);
 
-  if (
-    !transportExploration ||
-    (!transportExploration.nearby_stops?.length && !transportExploration.nearby_pois?.length)
-  ) {
+  if (!exploration.nearby_stops?.length && !exploration.nearby_pois?.length) {
     return null;
   }
 
@@ -18,14 +19,14 @@ export function TransportExplorationPanel() {
   return (
     <div className="atlas-rail__exploration">
       <div className="atlas-rail__exploration-head">Nearby results</div>
-      {transportExploration.summary && (
-        <p className="atlas-rail__exploration-summary">{transportExploration.summary}</p>
+      {exploration.summary && (
+        <p className="atlas-rail__exploration-summary">{exploration.summary}</p>
       )}
-      {transportExploration.nearby_stops && transportExploration.nearby_stops.length > 0 && (
+      {exploration.nearby_stops && exploration.nearby_stops.length > 0 && (
         <>
           <div className="atlas-rail__exploration-label">Stops</div>
           <ul className="atlas-rail__exploration-list">
-            {transportExploration.nearby_stops.map((row, i) => {
+            {exploration.nearby_stops.map((row, i) => {
               const name = String(row.station_name ?? row.stop_name ?? row.station_id ?? "?");
               const dist = row.distance_m != null ? `${Math.round(Number(row.distance_m))} m` : "";
               const sid = typeof row.station_id === "string" ? row.station_id : null;
@@ -52,11 +53,11 @@ export function TransportExplorationPanel() {
           </ul>
         </>
       )}
-      {transportExploration.nearby_pois && transportExploration.nearby_pois.length > 0 && (
+      {exploration.nearby_pois && exploration.nearby_pois.length > 0 && (
         <>
           <div className="atlas-rail__exploration-label">POIs</div>
           <ul className="atlas-rail__exploration-list">
-            {transportExploration.nearby_pois.map((row, i) => {
+            {exploration.nearby_pois.map((row, i) => {
               const name = String(row.name ?? row.type ?? "POI");
               const dist = row.distance_m != null ? `${Math.round(Number(row.distance_m))} m` : "";
               const cat = row.type ? String(row.type) : "";

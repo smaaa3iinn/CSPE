@@ -97,7 +97,14 @@ export function buildTransportMapBody(
   const hasOverlay = Boolean(
     exp?.center || exp?.nearby_stops?.length || exp?.nearby_pois?.length,
   );
-  if (hasOverlay) {
+  const hasRoute = Boolean(
+    (ctx.pathIds && ctx.pathIds.length > 0) ||
+      (ctx.pathStationIds && ctx.pathStationIds.length > 0),
+  );
+
+  if (hasOverlay && !hasRoute) {
+    mapBody.path_stop_ids = null;
+    delete mapBody.path_station_ids;
     mapBody.exploration_overlay = {
       center: exp?.center,
       radius_m: exp?.radius_m,

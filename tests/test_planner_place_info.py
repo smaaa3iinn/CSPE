@@ -130,6 +130,30 @@ class PlaceInfoIntentTests(unittest.TestCase):
         self.assertEqual(intent.topic, "hours")
         self.assertEqual(intent.kind, "poi")
 
+    def test_look_up_brand_hours_after_exploration(self):
+        ctx = {
+            "router": {
+                "last_tool": "cspe_nearby_pois",
+                "last_tool_args": {"query": "République"},
+            },
+            "world": {
+                "transport": {
+                    "last_exploration": {
+                        "query": "République",
+                        "center": {"station_name": "République", "label": "République"},
+                    }
+                }
+            },
+        }
+        intent = detect_place_info_intent(
+            "look up starbucks opening hours",
+            agent_context=ctx,
+        )
+        self.assertIsNotNone(intent)
+        self.assertEqual(intent.topic, "hours")
+        self.assertEqual(intent.kind, "poi")
+        self.assertIn("starbucks", intent.query.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

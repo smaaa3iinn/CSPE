@@ -55,7 +55,17 @@ def enqueue_commands(commands: list[dict[str, Any]]) -> int:
             try:
                 q.put_nowait(payload)
             except queue.Full:
-                pass
+                try:
+                    q.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    q.put_nowait(payload)
+                except queue.Full:
+                    ui_log.log_atlas_transport_client_event(
+                        "shell_sse_queue_drop",
+                        {"dropped_commands": len(batch)},
+                    )
     return n
 
 

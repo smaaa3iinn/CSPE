@@ -61,6 +61,18 @@ class ConversationFocusTests(unittest.TestCase):
         self.assertIsNotNone(focus)
         self.assertEqual(focus["query"], "Republique")
 
+    def test_nearby_pois_tool_focus_is_station_anchor(self):
+        ctx = {
+            "router": {
+                "last_tool": "cspe_nearby_pois",
+                "last_tool_args": {"query": "République"},
+            }
+        }
+        focus = resolve_conversation_focus(ctx)
+        self.assertIsNotNone(focus)
+        self.assertEqual(focus["place_kind"], "station")
+        self.assertEqual(focus["query"], "République")
+
 
 if __name__ == "__main__":
     unittest.main()

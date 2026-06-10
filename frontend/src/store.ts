@@ -6,7 +6,23 @@ export type { AtlasTransportActionPayload, AtlasTransportActionSpec } from "./tr
 
 export type AppMode = "transport" | "visual" | "memory" | "music";
 
-type ChatTurn = { role: "user" | "assistant"; content: string };
+type ChatTurn =
+  | { role: "user"; content: string }
+  | { role: "assistant"; content: string }
+  | { role: "exploration"; exploration: import("./transport/atlasTransportTypes").TransportExplorationView };
+
+function explorationViewSignature(
+  exploration: import("./transport/atlasTransportTypes").TransportExplorationView,
+): string {
+  const center = exploration.center ?? {};
+  return JSON.stringify({
+    summary: exploration.summary ?? "",
+    radius_m: exploration.radius_m ?? null,
+    stops: exploration.nearby_stops?.length ?? 0,
+    pois: exploration.nearby_pois?.length ?? 0,
+    center_id: center.station_id ?? center.stop_id ?? center.label ?? null,
+  });
+}
 
 export type TransportMapFocusRequest = {
   seq: number;
@@ -88,6 +104,9 @@ type State = {
   transportMapChromeHidden: boolean;
   setMode: (m: AppMode) => void;
   appendUserMessage: (text: string) => void;
+  appendChatExploration: (
+    exploration: import("./transport/atlasTransportTypes").TransportExplorationView,
+  ) => void;
   setChatLoading: (v: boolean) => void;
   setChatError: (e: string | null) => void;
   applyChatResponse: (outputs: StructuredOutput[], err: string | null) => void;
@@ -155,6 +174,20 @@ export const useAppStore = create<State>((set) => ({
     set((s) => ({
       chatHistory: [...s.chatHistory, { role: "user", content: text }],
     })),
+  appendChatExploration: (exploration) =>
+    set((s) => {
+      if (!exploration.nearby_stops?.length && !exploration.nearby_pois?.length) {
+        return s;
+      }
+      const sig = explorationViewSignature(exploration);
+      const last = s.chatHistory[s.chatHistory.length - 1];
+      if (last?.role === "exploration" && explorationViewSignature(last.exploration) === sig) {
+        return s;
+      }
+      return {
+        chatHistory: [...s.chatHistory, { role: "exploration", exploration }],
+      };
+    }),
   setChatLoading: (v) => set({ chatLoading: v }),
   setChatError: (e) => set({ chatError: e }),
   applyChatResponse: (outputs, err) =>
@@ -163,7 +196,7 @@ export const useAppStore = create<State>((set) => ({
       const nextHistory = [...s.chatHistory];
       if (assistantText) {
         nextHistory.push({ role: "assistant", content: assistantText });
-      } else if (err) {
+      } else       if (err) {
         nextHistory.push({ role: "assistant", content: `Error: ${err}` });
       }
       return {

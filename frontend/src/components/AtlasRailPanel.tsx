@@ -13,7 +13,6 @@ export function AtlasRailPanel() {
   const history = useAppStore((s) => s.chatHistory);
   const syncVoiceUi = useAppStore((s) => s.syncAtlasVoiceUi);
   const loading = useAppStore((s) => s.chatLoading);
-  const transportExplorationSeq = useAppStore((s) => s.transportExplorationSeq);
   const { draft, setDraft, send, localErr: textErr, inputDisabled } = useAtlasTextChat();
 
   const [localErr, setLocalErr] = useState<string | null>(null);
@@ -32,7 +31,7 @@ export function AtlasRailPanel() {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [history.length, loading, holding, voiceUser, voiceAssistant, transportExplorationSeq]);
+  }, [history.length, loading, holding, voiceUser, voiceAssistant]);
 
   const endHold = useCallback(async () => {
     if (!holdingRef.current) return;
@@ -109,16 +108,20 @@ export function AtlasRailPanel() {
       <div className="atlas-rail__head">Atlas</div>
       <div ref={scrollRef} className="atlas-rail__scroll">
         {history.length === 0 && !loading && <p className="muted" style={{ margin: 0, fontSize: 12 }}>Message Atlas below.</p>}
-        {history.map((m, i) => (
-          <div
-            key={i}
-            className={`atlas-rail__bubble${m.role === "user" ? " atlas-rail__bubble--user" : " atlas-rail__bubble--assistant"}`}
-          >
-            {m.content}
-          </div>
-        ))}
+        {history.map((m, i) => {
+          if (m.role === "exploration") {
+            return <TransportExplorationPanel key={`exploration-${i}`} exploration={m.exploration} />;
+          }
+          return (
+            <div
+              key={i}
+              className={`atlas-rail__bubble${m.role === "user" ? " atlas-rail__bubble--user" : " atlas-rail__bubble--assistant"}`}
+            >
+              {m.content}
+            </div>
+          );
+        })}
         {loading && <p className="muted" style={{ margin: 0, fontSize: 12 }}>Thinking…</p>}
-        <TransportExplorationPanel />
         {holding && (
           <div className="atlas-rail__voice-strip">
             <div className="atlas-rail__pill">Live (voice)</div>

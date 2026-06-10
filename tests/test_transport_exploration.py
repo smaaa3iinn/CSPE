@@ -74,6 +74,22 @@ class TransportExplorationValidationTests(unittest.TestCase):
         self.assertEqual(route_view["station_path_ids"], ["station:a", "station:b"])
         self.assertEqual(route_view["route_legs"][0]["summary"], "A to B")
 
+    def test_exploration_shell_commands_clear_route_first(self):
+        cmds = agent_tools.shell_commands_for_exploration(
+            {
+                "center": {"label": "Nation", "lat": 48.8, "lon": 2.4},
+                "radius_m": 500,
+                "nearby_stops": [],
+                "nearby_pois": [{"name": "cafe"}],
+                "mode": "metro",
+            }
+        )
+        route_views = [c for c in cmds if c["kind"] == "transport_route_view"]
+        self.assertEqual(len(route_views), 1)
+        self.assertTrue(route_views[0]["clear_paths"])
+        self.assertIsNone(route_views[0]["path_ids"])
+        self.assertTrue(any(c["kind"] == "transport_exploration_view" for c in cmds))
+
     def test_route_shell_commands_surface_server_failure(self):
         cmds = agent_tools.shell_commands_for_route(
             {
