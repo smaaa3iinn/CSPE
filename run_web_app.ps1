@@ -1,5 +1,5 @@
 # Full product stack: Atlas headless (5055) + product API (8787) + GraphXR/WebXR (3000) + Vite (5173).
-# Transport + shell + Spotify + memory APIs for the React app and Atlas tools are on the same FastAPI process (8787): /api/transport/*, /api/shell/*, etc.
+# Transport + shell APIs for the React app and Atlas tools are on the same FastAPI process (8787): /api/transport/*, /api/shell/*, etc.
 # Atlas tools: CSPE_FRONTEND_URL defaults to http://127.0.0.1:5173 (React/Vite origin for cspe_open_transport_map).
 # GraphXR 3D/VR viewer: http://127.0.0.1:3000/viewer (auto-started; override with VITE_GRAPHXR_VIEWER_URL).
 #
@@ -575,8 +575,7 @@ try {
     Write-Host '[4] Starting Vite on 0.0.0.0:5173 - laptop: http://127.0.0.1:5173'
     Write-Host '    Same WiFi iPad or phone: http://YOUR_LAN_IP:5173 - run ipconfig to find IPv4'
     Write-Host '    GraphXR viewer:' $env:VITE_GRAPHXR_VIEWER_URL
-    Write-Host '    Optional .env: VITE_API_BASE=http://YOUR_LAN_IP:8787 if you bypass the Vite proxy; SPOTIFY_REDIRECT_URI must match the page origin for OAuth.'
-    Write-Host '    Spotify dashboard: add redirect URI for each origin, e.g. http://192.168.x.x:5173/callback'
+    Write-Host '    Optional .env: VITE_API_BASE=http://YOUR_LAN_IP:8787 if you bypass the Vite proxy.'
     Write-Host '    Logs: Get-Content logs\activity_compact.log -Wait  (readable)  |  logs\activity.log  (full)  |  logs\health.log'
     Write-Host '    Press Ctrl+C here to stop the dev server; background Python/Node processes will be stopped.'
     $frontendDir = Join-Path $Root "frontend"

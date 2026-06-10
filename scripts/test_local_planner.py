@@ -44,7 +44,6 @@ from src.atlas_client.router.local_planner import (  # noqa: E402
     validate_planner_decision,
     warmup_local_planner,
 )
-from src.atlas_client.router.memory_arg_enricher import enrich_memory_add_args  # noqa: E402
 from src.atlas_client.router.ollama_runtime import gpu_runtime_report  # noqa: E402
 from src.atlas_client.router.planner_domains import (  # noqa: E402
     build_compact_catalog,
@@ -56,7 +55,6 @@ TEST_UTTERANCES = [
     "Route me from Châtelet to République and open the map",
     "Search stops near République",
     "Open the transport map",
-    "Add a todo to leave in 15 minutes",
     "Find the route from Gare de Lyon to La Défense",
     "Show the 3D graph",
     "Switch to transport mode",
@@ -82,27 +80,6 @@ def print_gpu_report() -> None:
             "\n  NOTE: partial CPU offload detected — use qwen2.5:3b-instruct "
             "to fit fully on 6GB VRAM."
         )
-
-
-def test_memory_due_at() -> None:
-    _print_header("Memory enricher: relative due_at + task text")
-    cases = [
-        ("Add a todo to leave in 15 minutes", "Leave"),
-        ("Add a todo to leave for République in 15 minutes", "Leave for République"),
-        ("Remind me to leave the house in half an hour", "Leave the house"),
-        ("Remind me in half an hour to call home", "Call home"),
-    ]
-    for text, want_text in cases:
-        enriched = enrich_memory_add_args(args={"text": "Leave"}, user_text=text)
-        print(f"\n  USER: {text!r}")
-        print(f"  text: {enriched.args.get('text')!r} (want ~{want_text!r})")
-        print(f"  due_at: {enriched.args.get('due_at')!r}")
-        due = enriched.args.get("due_at")
-        if due:
-            assert str(due)[:4].isdigit(), f"due_at not ISO: {due}"
-        got = enriched.args.get("text") or ""
-        if want_text.lower() not in got.lower() and got.lower() != want_text.lower():
-            print(f"  NOTE: text mismatch got={got!r}")
 
 
 def test_planner_utterance(utterance: str, *, allowed: set[str]) -> None:
@@ -140,10 +117,6 @@ def test_planner_utterance(utterance: str, *, allowed: set[str]) -> None:
         print(f"  latency_ms: {metrics.latency_ms:.0f}")
         print(f"  validation_ok: {ok} ({err or 'ok'})")
         print(f"  tool: {decision.get('tool_name')} args={decision.get('args')}")
-        due = (decision.get("args") or {}).get("due_at")
-        if decision.get("tool_name") == "memory_add" and due:
-            iso_ok = isinstance(due, str) and due[:4].isdigit() and "T" in due
-            print(f"  due_at_iso: {iso_ok} ({due!r})")
         if metrics.fallback_reason:
             print(f"  fallback_reason: {metrics.fallback_reason!r}")
     except LocalPlannerError as exc:
@@ -184,7 +157,6 @@ def main() -> int:
     allowed = allowed_tool_names()
     print(f"Full catalog: {len(full)} chars / {len(allowed)} tools")
 
-    test_memory_due_at()
     print_gpu_report()
 
     if args.benchmark:

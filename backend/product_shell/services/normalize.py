@@ -15,30 +15,6 @@ def normalize_atlas_ui(ui: dict[str, Any]) -> list[dict[str, Any]]:
     if assistant:
         out.append({"type": "text", "role": "assistant", "content": assistant})
 
-    panels = ui.get("panels") or []
-    panel_items: list[dict[str, Any]] = []
-    if isinstance(panels, list):
-        for p in panels:
-            if not isinstance(p, dict):
-                continue
-            urls = [str(u) for u in (p.get("urls") or []) if str(u).startswith("http")]
-            panel_items.append(
-                {
-                    "title": (p.get("title") or "Panel").strip(),
-                    "query": (p.get("query") or "").strip(),
-                    "urls": urls,
-                }
-            )
-
-    if panel_items:
-        out.append({"type": "visual_board", "panels": panel_items})
-        flat: list[dict[str, str]] = []
-        for pi in panel_items:
-            for u in pi["urls"]:
-                flat.append({"url": u, "caption": pi.get("title") or ""})
-        if flat:
-            out.append({"type": "image_results", "images": flat})
-
     status = ui.get("status") or ui.get("system")
     if isinstance(status, dict) and status:
         out.append({"type": "system_status", "status": status})

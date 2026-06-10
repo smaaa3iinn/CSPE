@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src" / "work" / "atlas" / "src"))
 
 from atlas_client.router.central_intent_router import route_intent  # noqa: E402
-from atlas_client.router.domain_routers import route_transport, route_poi, route_visual_3d, route_web  # noqa: E402
+from atlas_client.router.domain_routers import route_transport, route_poi, route_visual_3d  # noqa: E402
 from atlas_client.router.intent_fallback import try_deterministic_intent  # noqa: E402
 from atlas_client.router.intent_schema import IntentEntities, StructuredIntent  # noqa: E402
 from atlas_client.router.tool_executor import list_tools  # noqa: E402
@@ -131,12 +131,6 @@ class IntentRoutingTests(unittest.TestCase):
         self.assertEqual(decision.normalized_intent.domain, "map_ui")
         self.assertEqual(plan.steps[0].tool, "cspe_transport_action")
 
-    def test_web_hotels(self):
-        decision, plan = _route("search the web for nearby hotels")
-        self.assertEqual(decision.normalized_intent.domain, "web")
-        self.assertEqual(plan.steps[0].tool, "web_search")
-        self.assertIn("serpapi", decision.execution_plan.data_sources)
-
     def test_ambiguous_republique_hours(self):
         decision, plan = _route("République hours")
         self.assertEqual(decision.normalized_intent.intent, "station_hours")
@@ -235,7 +229,7 @@ class IntentRoutingTests(unittest.TestCase):
     def test_now_around_place_d_italie(self):
         decision, plan = _route("now around place d'italie")
         self.assertIn(decision.normalized_intent.intent, ("explore_area", "poi_search", "nearby_stops"))
-        self.assertNotEqual(plan.steps[0].tool, "memory_search")
+        self.assertNotIn("memory_search", ALLOWED)
 
     def test_stops_query_normalized(self):
         decision, plan = _route("now show me stops around place d'italie")

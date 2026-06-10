@@ -15,8 +15,6 @@ _events: deque[dict[str, Any]] = deque(maxlen=_MAX_EVENTS)
 _world_state: dict[str, Any] = {
     "ui_mode": "transport",
     "transport": {},
-    "memory_project_id": None,
-    "spotify": {},
     "last_shell_commands": [],
     "updated_at": None,
 }
@@ -45,10 +43,8 @@ def get_context() -> dict[str, Any]:
                     "map",
                     "graph3d",
                 ],
-                "memory": ["projects", "tasks"],
-                "music": ["spotify_play", "spotify_pause", "spotify_next"],
                 "ui": ["set_mode", "transport_action", "structured_outputs"],
-                "search": ["web_search", "image_search", "place_lookup_online"],
+                "search": ["place_lookup_online"],
             },
         }
 

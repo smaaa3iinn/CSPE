@@ -4,7 +4,7 @@ import type { StructuredOutput } from "./types/payloads";
 
 export type { AtlasTransportActionPayload, AtlasTransportActionSpec } from "./transport/atlasTransportTypes";
 
-export type AppMode = "transport" | "visual" | "memory" | "music";
+export type AppMode = "transport";
 
 type ChatTurn =
   | { role: "user"; content: string }
@@ -31,37 +31,14 @@ export type TransportMapFocusRequest = {
   label?: string;
 };
 
-type VisualPanel = { title: string; query: string; urls: string[] };
-
 function ingestStructuredOutputs(outputs: StructuredOutput[]) {
   let assistantText = "";
-  const byUrl = new Map<string, { url: string; caption?: string }>();
-  let panels: VisualPanel[] = [];
-
   for (const b of outputs) {
     if (b.type === "text" && (b.role === "assistant" || !b.role)) {
       assistantText = [assistantText, b.content].filter(Boolean).join("\n\n");
     }
-    if (b.type === "image_results") {
-      for (const im of b.images) {
-        if (im.url && !byUrl.has(im.url)) {
-          byUrl.set(im.url, { url: im.url, caption: im.caption });
-        }
-      }
-    }
-    if (b.type === "visual_board") {
-      panels = b.panels;
-      for (const p of b.panels) {
-        for (const u of p.urls) {
-          if (u && !byUrl.has(u)) {
-            byUrl.set(u, { url: u, caption: p.title || undefined });
-          }
-        }
-      }
-    }
   }
-
-  return { assistantText, images: [...byUrl.values()], panels };
+  return { assistantText };
 }
 
 type TransportMode = "all" | "metro" | "rail" | "tram" | "bus" | "other";
@@ -72,9 +49,6 @@ type State = {
   chatLoading: boolean;
   chatError: string | null;
   lastStructuredOutputs: StructuredOutput[];
-  knowledgeSummary: string;
-  knowledgeImages: { url: string; caption?: string }[];
-  visualPanels: VisualPanel[];
   transportGraphMode: TransportMode;
   transportUseLcc: boolean;
   transportViz: "geographic" | "network_3d" | "graph3d";
@@ -99,7 +73,6 @@ type State = {
   transportMapSelectionStationId: string | null;
   atlasTransportActions: AtlasTransportActionPayload[];
   atlasTransportActionSeq: number;
-  memoryProjectId: string | null;
   /** Transport map: hide HUD panels for full-bleed map (toggle with F). */
   transportMapChromeHidden: boolean;
   setMode: (m: AppMode) => void;
@@ -132,7 +105,6 @@ type State = {
   }) => void;
   enqueueAtlasTransportAction: (spec: AtlasTransportActionPayload["spec"]) => AtlasTransportActionPayload;
   completeAtlasTransportAction: (seq: number) => void;
-  setMemoryProjectId: (id: string | null) => void;
   syncAtlasVoiceUi: (outputs: StructuredOutput[]) => void;
   setTransportMapChromeHidden: (hidden: boolean) => void;
   toggleTransportMapChromeHidden: () => void;
@@ -144,9 +116,6 @@ export const useAppStore = create<State>((set) => ({
   chatLoading: false,
   chatError: null,
   lastStructuredOutputs: [],
-  knowledgeSummary: "",
-  knowledgeImages: [],
-  visualPanels: [],
   transportGraphMode: "metro",
   transportUseLcc: false,
   transportViz: "geographic",
@@ -166,10 +135,9 @@ export const useAppStore = create<State>((set) => ({
   transportMapSelectionStationId: null,
   atlasTransportActions: [],
   atlasTransportActionSeq: 0,
-  memoryProjectId: null,
   transportMapChromeHidden: false,
 
-  setMode: (m) => set({ mode: m }),
+  setMode: () => set({ mode: "transport" }),
   appendUserMessage: (text) =>
     set((s) => ({
       chatHistory: [...s.chatHistory, { role: "user", content: text }],
@@ -192,20 +160,17 @@ export const useAppStore = create<State>((set) => ({
   setChatError: (e) => set({ chatError: e }),
   applyChatResponse: (outputs, err) =>
     set((s) => {
-      const { assistantText, images, panels } = ingestStructuredOutputs(outputs);
+      const { assistantText } = ingestStructuredOutputs(outputs);
       const nextHistory = [...s.chatHistory];
       if (assistantText) {
         nextHistory.push({ role: "assistant", content: assistantText });
-      } else       if (err) {
+      } else if (err) {
         nextHistory.push({ role: "assistant", content: `Error: ${err}` });
       }
       return {
         lastStructuredOutputs: outputs,
         chatHistory: nextHistory,
         chatError: err,
-        knowledgeSummary: assistantText || s.knowledgeSummary,
-        knowledgeImages: images.length ? images : s.knowledgeImages,
-        visualPanels: panels.length ? panels : s.visualPanels,
       };
     }),
   setTransportGraphMode: (m) => set({ transportGraphMode: m }),
@@ -257,17 +222,10 @@ export const useAppStore = create<State>((set) => ({
     set((s) => ({
       atlasTransportActions: s.atlasTransportActions.filter((a) => a.seq !== seq),
     })),
-  setMemoryProjectId: (id) => set({ memoryProjectId: id }),
   syncAtlasVoiceUi: (outputs) =>
-    set((s) => {
-      const { assistantText, images, panels } = ingestStructuredOutputs(outputs);
-      return {
-        lastStructuredOutputs: outputs,
-        knowledgeSummary: assistantText || s.knowledgeSummary,
-        knowledgeImages: images.length ? images : s.knowledgeImages,
-        visualPanels: panels.length ? panels : s.visualPanels,
-      };
-    }),
+    set(() => ({
+      lastStructuredOutputs: outputs,
+    })),
   setTransportMapChromeHidden: (hidden) => set({ transportMapChromeHidden: hidden }),
   toggleTransportMapChromeHidden: () =>
     set((s) => ({ transportMapChromeHidden: !s.transportMapChromeHidden })),

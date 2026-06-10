@@ -4,8 +4,6 @@ import { useAppStore } from "../store";
 
 /** Keeps /api/agent/context in sync with Zustand UI state for the Atlas planner. */
 export function AgentContextSync() {
-  const mode = useAppStore((s) => s.mode);
-  const memoryProjectId = useAppStore((s) => s.memoryProjectId);
   const graphMode = useAppStore((s) => s.transportGraphMode);
   const useLcc = useAppStore((s) => s.transportUseLcc);
   const pathIds = useAppStore((s) => s.transportPathIds);
@@ -15,8 +13,7 @@ export function AgentContextSync() {
 
   useEffect(() => {
     void patchAgentContext({
-      ui_mode: mode,
-      memory_project_id: memoryProjectId,
+      ui_mode: "transport",
       transport: {
         graph_mode: graphMode,
         use_lcc: useLcc,
@@ -26,7 +23,7 @@ export function AgentContextSync() {
         route_meta: routeMeta,
       },
     });
-  }, [mode, memoryProjectId, graphMode, useLcc, pathIds, stationPathIds, routeError, routeMeta]);
+  }, [graphMode, useLcc, pathIds, stationPathIds, routeError, routeMeta]);
 
   return null;
 }

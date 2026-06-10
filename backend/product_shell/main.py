@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 def _load_local_env() -> None:
-    """Load repo-root .env before router imports (Spotify/Mapbox read os.environ at import time)."""
+    """Load repo-root .env before router imports (Mapbox/IDFM read os.environ at import time)."""
     try:
         from dotenv import load_dotenv
     except ImportError:
@@ -28,7 +28,7 @@ from src.core.project_logs import configure_product_shell_logging, configure_uvi
 configure_product_shell_logging()
 configure_uvicorn_loggers()
 
-from backend.product_shell.routers import agent, atlas, chat, memory, shell, spotify, transport
+from backend.product_shell.routers import agent, atlas, chat, shell, transport
 from backend.product_shell.services import warmup
 
 app = FastAPI(title="CSPE Product Shell API", version="0.1.0")
@@ -87,8 +87,6 @@ app.include_router(atlas.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")
 app.include_router(shell.router, prefix="/api")
 app.include_router(transport.router, prefix="/api")
-app.include_router(memory.router, prefix="/api")
-app.include_router(spotify.router, prefix="/api")
 
 
 @app.get("/api/health")
@@ -97,14 +95,12 @@ def health() -> dict:
         "ok": True,
         "service": "product_shell",
         "capabilities": {
-            # Lets the UI detect an old API process still bound to 8787 (restart uvicorn / run_web_app.ps1).
-            "spotify_track_search": True,
-            "spotify_playlists": True,
             "shell_commands": True,
             "agent_planner": True,
             "agent_context": True,
             "shell_sse": True,
             "transport_exploration": True,
+            "transport_graph3d": True,
         },
         "warmup": warmup.warmup_status(),
     }

@@ -124,59 +124,9 @@ class TransportStatsResponse(BaseModel):
     edges: int
 
 
-class MemoryProject(BaseModel):
-    id: str
-    name: str
-    count: int | None = None
-    done_count: int | None = None
-    created_at: str | None = None
-    updated_at: str | None = None
-
-
-class MemoryProjectsResponse(BaseModel):
-    projects: list[MemoryProject]
-
-
-class MemoryProjectCreate(BaseModel):
-    name: str = Field(..., min_length=1, max_length=200)
-
-
-class MemoryProjectPatch(BaseModel):
-    name: str = Field(..., min_length=1, max_length=200)
-
-
-class MemoryTaskItem(BaseModel):
-    id: str
-    title: str
-    status: Literal["todo", "in_progress", "done"] = "todo"
-    done: bool = False
-    tags: list[str] = Field(default_factory=list)
-    due_at: str | None = None
-    created_at: str | None = None
-    updated_at: str | None = None
-
-
-class MemoryTasksResponse(BaseModel):
-    project_id: str
-    tasks: list[MemoryTaskItem]
-
-
-class MemoryTaskCreate(BaseModel):
-    project_id: str
-    title: str = Field(..., min_length=1, max_length=2000)
-    status: Literal["todo", "in_progress", "done"] = "todo"
-
-
-class MemoryTaskPatch(BaseModel):
-    title: str | None = Field(None, min_length=1, max_length=2000)
-    status: Literal["todo", "in_progress", "done"] | None = None
-
-
 class AgentContextPatch(BaseModel):
-    ui_mode: Literal["transport", "visual", "memory", "music"] | None = None
+    ui_mode: Literal["transport"] | None = None
     transport: dict[str, Any] | None = None
-    memory_project_id: str | None = None
-    spotify: dict[str, Any] | None = None
 
 
 class AgentEventBody(BaseModel):

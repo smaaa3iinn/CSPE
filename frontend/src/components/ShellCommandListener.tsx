@@ -52,8 +52,8 @@ function applyOne(raw: Record<string, unknown>, navigate: ReturnType<typeof useN
   switch (kind) {
     case "set_mode": {
       const m = raw.mode;
-      if (m === "transport" || m === "visual" || m === "memory" || m === "music") {
-        useAppStore.getState().setMode(m);
+      if (m === "transport") {
+        useAppStore.getState().setMode("transport");
       }
       break;
     }
@@ -202,11 +202,6 @@ function applyOne(raw: Record<string, unknown>, navigate: ReturnType<typeof useN
       });
       clearTransportRouteState();
       clearTransportExplorationState();
-      break;
-    }
-    case "memory_project": {
-      const id = raw.project_id;
-      useAppStore.getState().setMemoryProjectId(id === null || id === undefined ? null : String(id));
       break;
     }
     case "apply_structured_outputs": {

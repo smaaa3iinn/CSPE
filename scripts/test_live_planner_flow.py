@@ -28,7 +28,6 @@ from planner_live_test_lib import (  # noqa: E402
 
 QUICK_COMMANDS: list[tuple[str, object]] = [
     ("Route me from Chatelet to Republique and open the map", score_route_shortcut),
-    ("Add a todo to leave in 15 minutes", lambda m: score_shortcut_fast(m, expected_tools={"memory_add"})),
     ("Search stops near Republique", lambda m: score_shortcut_fast(m, expected_tools={"cspe_search_stops"})),
     ("Show the 3D graph", lambda m: score_shortcut_fast(m, expected_tools={"cspe_open_graph3d"})),
     ("What can you do?", lambda m: score_shortcut_fast(m)),

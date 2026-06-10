@@ -58,7 +58,7 @@ def build_test_cases(*, include_optional_fallback: bool) -> list[TestCase]:
         ("Search stops near Republique", {"cspe_search_stops", "cspe_show_station_or_line_info"}, False),
         ("Show the 3D graph", {"cspe_open_graph3d"}, True),
         ("Switch to transport mode", {"cspe_set_mode"}, True),
-        ("Add a todo to leave in 15 minutes", {"memory_add"}, False),
+        ("Explore area around Republique", {"cspe_explore_area", "cspe_nearby_pois"}, False),
     ]
     for cmd, tools, require_shortcut in cat1:
         cases.append(
@@ -92,8 +92,8 @@ def build_test_cases(*, include_optional_fallback: bool) -> list[TestCase]:
     # 3. Multi-step cross-domain (ordered tool execution)
     multi_ordered: list[tuple[str, list[str]]] = [
         (
-            "Route me from Chatelet to Republique, open the map, and add a todo to leave in 15 minutes",
-            ["cspe_compute_route", "memory_add"],
+            "Route me from Chatelet to Republique, open the map, and show the 3D graph",
+            ["cspe_compute_route", "cspe_open_graph3d"],
         ),
         (
             "Search stops near Republique and then show the 3D graph",
@@ -104,12 +104,12 @@ def build_test_cases(*, include_optional_fallback: bool) -> list[TestCase]:
             ["cspe_set_mode", "cspe_open_transport_map", "cspe_search_stops"],
         ),
         (
-            "Add a todo to call home in 30 minutes and then show me what you can do",
-            ["memory_add"],
+            "Search stops near Chatelet and then explore the area",
+            ["cspe_search_stops", "cspe_explore_area"],
         ),
         (
-            "Route me from Chatelet to Republique, then remind me to leave in 15 minutes, then show the 3D graph",
-            ["cspe_compute_route", "memory_add", "cspe_open_graph3d"],
+            "Route me from Chatelet to Republique, then show nearby POIs, then show the 3D graph",
+            ["cspe_compute_route", "cspe_nearby_pois", "cspe_open_graph3d"],
         ),
     ]
     for cmd, tools in multi_ordered:
@@ -126,7 +126,7 @@ def build_test_cases(*, include_optional_fallback: bool) -> list[TestCase]:
         ("Route me from Chatelet to Republique", "route"),
         ("Now open it in 3D", "3d"),
         ("Search around there", "search"),
-        ("Add a reminder to leave for there in 15 minutes", "memory"),
+        ("Show POIs around there", "search"),
     ]
     for cmd, kind in followups:
         cases.append(
@@ -158,7 +158,7 @@ def build_test_cases(*, include_optional_fallback: bool) -> list[TestCase]:
     fr = [
         ("Cherche les arrêts près de République", {"cspe_search_stops"}),
         ("Calcule un trajet de Châtelet à République et ouvre la carte", {"cspe_compute_route"}),
-        ("Ajoute une tâche pour partir dans 15 minutes", {"memory_add"}),
+        ("Montre les POI près de République", {"cspe_nearby_pois"}),
         ("Route me from Chatelet à République and open la carte", {"cspe_compute_route"}),
     ]
     for cmd, tools in fr:
@@ -174,7 +174,7 @@ def build_test_cases(*, include_optional_fallback: bool) -> list[TestCase]:
     invalid_cmds = [
         "Route me from Atlantis to Wakanda",
         "Search stops near qwertyuiop",
-        "Add a todo sometime maybe later",
+        "Route me from nowhere to nowhere",
         "Open the 9D hologram view",
     ]
     for cmd in invalid_cmds:
