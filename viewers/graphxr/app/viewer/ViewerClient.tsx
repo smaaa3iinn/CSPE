@@ -161,6 +161,11 @@ export default function ViewerClient() {
     graphSceneRef.current?.resetCamera();
   }, []);
 
+  const handleGraphSelect = useCallback((data: any, type: SelectionType) => {
+    setSelectedItem(data);
+    setSelectionType(type);
+  }, []);
+
   const handleFilterChange = useCallback((filters: { nodes: Set<string> | null; edges: Set<string> | null }) => {
     setVisibleNodeIds(filters.nodes);
     setVisibleEdgeIds(filters.edges);
@@ -216,10 +221,7 @@ export default function ViewerClient() {
             ref={graphSceneRef}
             key="xr-scene"
             data={project.graph_data}
-            onSelect={(data, type) => {
-              setSelectedItem(data);
-              setSelectionType(type);
-            }}
+            onSelect={handleGraphSelect}
             visibleNodeIds={visibleNodeIds}
             visibleEdgeIds={visibleEdgeIds}
             onXRStateChange={setIsInXR}
@@ -235,10 +237,7 @@ export default function ViewerClient() {
             ref={graphSceneRef}
             key="web-scene"
             data={project.graph_data}
-            onSelect={(data, type) => {
-              setSelectedItem(data);
-              setSelectionType(type);
-            }}
+            onSelect={handleGraphSelect}
             visibleNodeIds={visibleNodeIds}
             visibleEdgeIds={visibleEdgeIds}
             showLabels={showLabels}

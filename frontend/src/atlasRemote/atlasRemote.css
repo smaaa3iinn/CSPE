@@ -1,0 +1,218 @@
+.atlas-remote {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 24px 20px 32px;
+  background: radial-gradient(ellipse at 50% 0%, #1a2a3a 0%, #0d1117 55%);
+  color: #e8edf2;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  box-sizing: border-box;
+}
+
+.atlas-remote__card {
+  width: min(440px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.atlas-remote__head {
+  text-align: center;
+}
+
+.atlas-remote__title {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.atlas-remote__sub {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+  color: #9aa8b5;
+  line-height: 1.45;
+}
+
+.atlas-remote__status-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.atlas-remote__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.atlas-remote__pill--listening {
+  background: rgba(46, 160, 67, 0.2);
+  border-color: rgba(46, 160, 67, 0.55);
+  color: #7ee787;
+}
+
+.atlas-remote__pill--processing {
+  background: rgba(56, 139, 253, 0.2);
+  border-color: rgba(56, 139, 253, 0.5);
+  color: #79c0ff;
+}
+
+.atlas-remote__pill--done {
+  background: rgba(46, 160, 67, 0.15);
+  border-color: rgba(46, 160, 67, 0.35);
+  color: #aff5b4;
+}
+
+.atlas-remote__pill--error {
+  background: rgba(248, 81, 73, 0.18);
+  border-color: rgba(248, 81, 73, 0.45);
+  color: #ffb1ac;
+}
+
+.atlas-remote__conn {
+  font-size: 0.75rem;
+  color: #7d8b98;
+}
+
+.atlas-remote__conn--ok {
+  color: #7ee787;
+}
+
+.atlas-remote__conn--bad {
+  color: #ffb1ac;
+}
+
+.atlas-remote__ptt-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 4px;
+}
+
+.atlas-remote__ptt {
+  width: min(220px, 72vw);
+  height: min(220px, 72vw);
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.2);
+  background: linear-gradient(145deg, #2d3f52, #1a2836);
+  color: #fff;
+  font-size: 1.05rem;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+
+.atlas-remote__ptt:active,
+.atlas-remote__ptt--active {
+  transform: scale(0.96);
+  border-color: rgba(46, 160, 67, 0.85);
+  background: linear-gradient(145deg, #1f4d2e, #163322);
+  box-shadow: 0 8px 28px rgba(46, 160, 67, 0.25);
+}
+
+.atlas-remote__ptt:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.atlas-remote__live {
+  min-height: 2.5rem;
+  text-align: center;
+  font-size: 1rem;
+  color: #c5d0db;
+  font-style: italic;
+  padding: 0 8px;
+}
+
+.atlas-remote__panel {
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.atlas-remote__panel-label {
+  margin: 0 0 6px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #7d8b98;
+}
+
+.atlas-remote__panel-text {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.atlas-remote__panel-text--empty {
+  color: #6b7a88;
+  font-style: italic;
+}
+
+.atlas-remote__err {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(248, 81, 73, 0.12);
+  border: 1px solid rgba(248, 81, 73, 0.35);
+  color: #ffb1ac;
+  font-size: 0.85rem;
+}
+
+.atlas-remote__typed {
+  display: flex;
+  gap: 8px;
+}
+
+.atlas-remote__typed input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.25);
+  color: #e8edf2;
+  font-size: 0.95rem;
+}
+
+.atlas-remote__typed button {
+  padding: 10px 16px;
+  border-radius: 8px;
+  border: none;
+  background: #388bfd;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.atlas-remote__typed button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.atlas-remote__hint {
+  margin: 0;
+  font-size: 0.78rem;
+  color: #6b7a88;
+  line-height: 1.45;
+  text-align: center;
+}

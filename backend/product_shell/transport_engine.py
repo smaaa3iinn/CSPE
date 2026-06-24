@@ -29,6 +29,7 @@ from src.core.station_layer import (
     station_path_from_stop_path,
     station_path_segment_geojson,
 )
+from src.core.route_styles import GRAPH3D_ROUTE_COLOR
 
 MAPBOX_ENV_VARS = ("MAPBOX_TOKEN", "MAPBOX_API_KEY", "MAPBOX_ACCESS_TOKEN")
 
@@ -54,13 +55,15 @@ _MAP_HTML_CACHE: OrderedDict[tuple[Any, ...], tuple[str, str | None]] = OrderedD
 _MAP_DISK_CACHE_VERSION = "map-html-v2"
 MAP_HTML_CACHE_DIR = ROOT / "data" / "derived" / "product_shell" / "map_html_cache"
 GRAPH3D_MODE_LAYER_Y = {
-    "bus": -960.0,
-    "tram": -480.0,
-    "rail": 0.0,
-    "metro": 480.0,
-    "other": 960.0,
-    "multi": 1440.0,
+    "bus": -150.0,
+    "tram": -100.0,
+    "rail": -50.0,
+    "metro": 0.0,
+    "other": 50.0,
+    "multi": 100.0,
 }
+# Uniform multiplier for geo X/Z (and non-layered degree lift). Mode layer Y uses GRAPH3D_MODE_LAYER_Y as-is.
+GRAPH3D_POSITION_SPREAD = 10.0
 GRAPH3D_MODE_COLORS = {
     "bus": "#22c55e",
     "tram": "#a855f7",
@@ -290,17 +293,22 @@ def _scaled_positions(raw: list[tuple[str, float, float, int]]) -> dict[str, tup
     lat_mid = (min(lats) + max(lats)) / 2.0
     span = max(max(lons) - min(lons), max(lats) - min(lats), 0.0001)
     scale = 180.0 / span
+    spread = GRAPH3D_POSITION_SPREAD
     out: dict[str, tuple[float, float, float]] = {}
     for node_id, lon, lat, degree in raw:
-        x = (lon - lon_mid) * scale
-        z = -(lat - lat_mid) * scale
-        y = min(18.0, max(0.0, float(degree) ** 0.5)) * 0.9
+        x = (lon - lon_mid) * scale * spread
+        z = -(lat - lat_mid) * scale * spread
+        y = min(18.0, max(0.0, float(degree) ** 0.5)) * 0.9 * spread
         out[node_id] = (x, y, z)
     return out
 
 
 def _mode_layer_y(mode_name: str) -> float:
     return GRAPH3D_MODE_LAYER_Y.get(mode_name, GRAPH3D_MODE_LAYER_Y["other"])
+
+
+def _scaled_mode_layer_y_metadata() -> dict[str, float]:
+    return dict(GRAPH3D_MODE_LAYER_Y)
 
 
 def _line_modes(lines: Any) -> list[str]:
@@ -396,7 +404,7 @@ def _base_graph3d_project(mode: str, use_lcc: bool, graph_viz_mode: str) -> dict
     G = graph_for(mode, use_lcc)
     idx = station_layer_for(mode, use_lcc)
     use_station_graph = gv == "station"
-    layered_by_transport_mode = mode == "all"
+    layered_by_transport_mode = mode in ("all", "all_mb")
 
     if use_station_graph:
         station_edges = aggregate_station_edges(G, idx)
@@ -501,7 +509,8 @@ def _base_graph3d_project(mode: str, use_lcc: bool, graph_viz_mode: str) -> dict
             "large_graph": len(nodes) > 5000 or len(edges) > 10000,
             "layered_by_transport_mode": layered_by_transport_mode,
             "mode_layer_axis": "y",
-            "mode_layer_y": GRAPH3D_MODE_LAYER_Y if layered_by_transport_mode else {},
+            "mode_layer_y": _scaled_mode_layer_y_metadata() if layered_by_transport_mode else {},
+            "position_spread": GRAPH3D_POSITION_SPREAD,
         }
     )
     return {
@@ -524,11 +533,17 @@ def create_graph3d_session(
     selected_stop_id: str | None = None,
     selected_station_id: str | None = None,
     view_fingerprint: str | None = None,
+    route_legs: list[dict[str, Any]] | None = None,
+    route_meta: str | None = None,
 ) -> dict[str, Any]:
     gv = graph_viz_mode if graph_viz_mode in ("stop", "station", "hybrid") else "stop"
     base = _base_graph3d_project(mode, use_lcc, gv)
     stop_path = [str(x) for x in (path_stop_ids or []) if str(x).strip()]
-    station_path = [str(x) for x in (path_station_ids or []) if str(x).strip()]
+    if stop_path:
+        idx = station_layer_for(mode, use_lcc)
+        station_path = station_path_from_stop_path(stop_path, idx)
+    else:
+        station_path = [str(x) for x in (path_station_ids or []) if str(x).strip()]
     route_ids = station_path if gv == "station" else stop_path
     route_node_set = set(route_ids)
     route_node_order = {node_id: idx for idx, node_id in enumerate(route_ids)}
@@ -565,7 +580,7 @@ def create_graph3d_session(
         if on_route:
             item["is_route"] = True
             item["route_index"] = route_node_order.get(node_id, 0)
-            item["color"] = "#f97316"
+            item["color"] = GRAPH3D_ROUTE_COLOR
         elif is_selected:
             item["is_selected"] = True
             item["color"] = "#ef4444"
@@ -578,8 +593,8 @@ def create_graph3d_session(
         if key in route_edge_order:
             item["is_route"] = True
             item["route_index"] = route_edge_order[key]
-            item["color"] = "#f97316"
-            item["weight"] = max(float(item.get("weight") or 1), 4.0)
+            item["color"] = GRAPH3D_ROUTE_COLOR
+            item["weight"] = max(float(item.get("weight") or 1), 10.0)
         edges.append(item)
 
     metadata = dict(base["metadata"])
@@ -593,6 +608,15 @@ def create_graph3d_session(
             "selected_node_count": len(select_ids),
         }
     )
+    if route_legs:
+        metadata["route_legs"] = route_legs
+    else:
+        metadata.pop("route_legs", None)
+    meta_line = (route_meta or "").strip()
+    if meta_line:
+        metadata["route_meta"] = meta_line
+    else:
+        metadata.pop("route_meta", None)
     if view_fingerprint:
         metadata["view_fingerprint"] = view_fingerprint
     project = {
@@ -628,11 +652,24 @@ def push_graph3d_sync(
     path_station_ids: list[str] | None,
     selected_stop_id: str | None = None,
     selected_station_id: str | None = None,
+    route_legs: list[dict[str, Any]] | None = None,
+    route_meta: str | None = None,
 ) -> dict[str, Any]:
     fp = (fingerprint or "").strip()
     cid = (client_id or "").strip()
     if not cid or not fp:
         raise ValueError("client_id and fingerprint are required for graph3d sync")
+    now = time.time()
+    _clean_graph3d_sync(now)
+    existing = _GRAPH3D_SYNC.get(cid)
+    if existing and existing[2] == fp:
+        _, session_id, _ = existing
+        _GRAPH3D_SYNC[cid] = (now + GRAPH3D_SYNC_TTL_S, session_id, fp)
+        return {
+            "session_id": session_id,
+            "fingerprint": fp,
+            "expires_in_s": GRAPH3D_SYNC_TTL_S,
+        }
     session = create_graph3d_session(
         mode=mode,
         use_lcc=use_lcc,
@@ -642,9 +679,9 @@ def push_graph3d_sync(
         selected_stop_id=selected_stop_id,
         selected_station_id=selected_station_id,
         view_fingerprint=fp,
+        route_legs=route_legs,
+        route_meta=route_meta,
     )
-    now = time.time()
-    _clean_graph3d_sync(now)
     _GRAPH3D_SYNC[cid] = (now + GRAPH3D_SYNC_TTL_S, session["session_id"], fp)
     return {
         "session_id": session["session_id"],
@@ -876,7 +913,7 @@ def search_stops(
             idx,
             (q or "").strip(),
             limit=limit,
-            mode=search_mode if search_mode != "all" else mode,
+            mode=search_mode if search_mode not in ("all", "all_mb") else mode,
             station_compact=station_first,
         )
         return _format_search_matches(matches, station_first=station_first)
@@ -894,7 +931,13 @@ def search_stops(
         if out:
             return out
 
-    if mode not in ("all", "") and mode_fallback:
+    if mode not in ("all", "all_mb", "") and mode_fallback:
+        for lcc in lcc_order:
+            out = _run("all", lcc)
+            if out:
+                return out
+
+    if mode == "all_mb" and mode_fallback:
         for lcc in lcc_order:
             out = _run("all", lcc)
             if out:

@@ -1,6 +1,19 @@
 import { Vector3, Color3, Color4, MeshBuilder, StandardMaterial, Scene, Mesh, ActionManager, ExecuteCodeAction, InstancedMesh, PBRMaterial, Quaternion, Matrix, TransformNode } from '@babylonjs/core';
 import * as GUI from '@babylonjs/gui';
 
+/** Neon green route highlight — must match backend GRAPH3D_ROUTE_COLOR. */
+const ROUTE_NEON_HEX = '#39ff14';
+const ROUTE_EDGE_THICKNESS = 8;
+const ROUTE_NODE_SCALE = 2.5;
+const ROUTE_RENDER_GROUP = 2;
+/** When a route is active, background graph elements are de-emphasized. */
+const BACKGROUND_NODE_SCALE = 0.5;
+const BACKGROUND_NODE_VISIBILITY = 0.16;
+const BACKGROUND_EDGE_ALPHA = 0.07;
+const BACKGROUND_EDGE_THICKNESS = 0.35;
+const BACKGROUND_LARGE_LINE_ALPHA = 0.06;
+const BACKGROUND_LARGE_LINE_ALPHA_NORMAL = 0.28;
+
 interface GraphData {
     nodes: Array<{
         id: string;
@@ -32,6 +45,9 @@ export class GraphRenderer {
     private uiTexture: GUI.AdvancedDynamicTexture | null = null;
     private tooltip: GUI.TextBlock | null = null;
     private showLabelsState: boolean = false;
+    private routeFocusActive = false;
+    private currentRouteSignature = 'none';
+    private largeGraphBackgroundLines: Mesh | null = null;
 
     public getGraphRoot(): TransformNode | null {
         return this.graphRoot;
@@ -45,6 +61,184 @@ export class GraphRenderer {
         } catch {
             return fallback;
         }
+    }
+
+    private routeNeonColor4(alpha = 1): Color4 {
+        return this.colorFromHex(ROUTE_NEON_HEX, new Color4(0.22, 1, 0.08, alpha));
+    }
+
+    private applyRouteNodeEmphasis(instance: InstancedMesh, baseScaling: Vector3) {
+        instance.visibility = 1;
+        instance.scaling = baseScaling.scale(ROUTE_NODE_SCALE);
+        instance.instancedBuffers.color = this.routeNeonColor4(1);
+        instance.renderOutline = true;
+        instance.outlineColor = Color3.FromHexString(ROUTE_NEON_HEX);
+        instance.outlineWidth = 0.12;
+        instance.renderingGroupId = ROUTE_RENDER_GROUP;
+    }
+
+    private hasActiveRoute(data: GraphData): boolean {
+        if (data.metadata?.has_route) {
+            return true;
+        }
+        return data.nodes.some((node) => !!node.is_route) || data.edges.some((edge) => !!edge.is_route);
+    }
+
+    private routeSignature(data: GraphData): string {
+        if (!this.hasActiveRoute(data)) {
+            return 'none';
+        }
+        const nodeIds = data.nodes.filter((node) => node.is_route).map((node) => node.id).sort().join('|');
+        const edgeKeys = data.edges
+            .filter((edge) => edge.is_route)
+            .map((edge) => `${edge.source}-${edge.target}`)
+            .sort()
+            .join('|');
+        return `route:${nodeIds}::${edgeKeys}`;
+    }
+
+    private applyDimmedNode(instance: InstancedMesh, node: { color?: string; is_route?: boolean }, baseScaling: Vector3) {
+        instance.renderOutline = false;
+        instance.renderingGroupId = 0;
+        instance.visibility = BACKGROUND_NODE_VISIBILITY;
+        instance.scaling = baseScaling.scale(BACKGROUND_NODE_SCALE);
+        if (instance.instancedBuffers?.color) {
+            if (node.color) {
+                const c = Color3.FromHexString(node.color);
+                instance.instancedBuffers.color = new Color4(c.r * 0.35, c.g * 0.35, c.b * 0.35, 0.2);
+            } else {
+                instance.instancedBuffers.color = new Color4(0.08, 0.12, 0.18, 0.18);
+            }
+        }
+    }
+
+    private restoreNormalNode(instance: InstancedMesh, node: { color?: string; is_route?: boolean }, baseScaling: Vector3) {
+        instance.visibility = 1;
+        instance.renderOutline = false;
+        instance.renderingGroupId = 0;
+        instance.scaling = baseScaling.clone();
+        if (node.is_route) {
+            this.applyRouteNodeEmphasis(instance, baseScaling);
+            return;
+        }
+        if (instance.instancedBuffers?.color) {
+            if (node.color) {
+                const c = Color3.FromHexString(node.color);
+                instance.instancedBuffers.color = new Color4(c.r, c.g, c.b, 1);
+            } else {
+                instance.instancedBuffers.color = new Color4(0.1, 0.6, 0.9, 1);
+            }
+        }
+    }
+
+    private restoreNodeInteractionState(
+        instance: InstancedMesh,
+        node: { color?: string; is_route?: boolean },
+        baseScaling: Vector3
+    ) {
+        if (node.is_route) {
+            this.applyRouteNodeEmphasis(instance, baseScaling);
+            return;
+        }
+        if (this.routeFocusActive) {
+            this.applyDimmedNode(instance, node, baseScaling);
+            return;
+        }
+        this.restoreNormalNode(instance, node, baseScaling);
+    }
+
+    private applyDimmedEdge(instance: InstancedMesh, edge: { color?: string }) {
+        instance.renderingGroupId = 0;
+        if (edge.color) {
+            instance.instancedBuffers.color = this.colorFromHex(
+                edge.color,
+                new Color4(0.35, 0.2, 0.35, BACKGROUND_EDGE_ALPHA)
+            );
+        } else {
+            instance.instancedBuffers.color = new Color4(0.35, 0.2, 0.35, BACKGROUND_EDGE_ALPHA);
+        }
+        instance.scaling.x = BACKGROUND_EDGE_THICKNESS;
+        instance.scaling.y = BACKGROUND_EDGE_THICKNESS;
+    }
+
+    private restoreEdgeInteractionState(
+        instance: InstancedMesh,
+        edge: { color?: string; is_route?: boolean },
+        defaultThickness: number
+    ) {
+        if (edge.is_route) {
+            instance.instancedBuffers.color = this.routeNeonColor4(1);
+            instance.scaling.x = ROUTE_EDGE_THICKNESS;
+            instance.scaling.y = ROUTE_EDGE_THICKNESS;
+            instance.renderingGroupId = ROUTE_RENDER_GROUP;
+            return;
+        }
+        if (this.routeFocusActive) {
+            this.applyDimmedEdge(instance, edge);
+            return;
+        }
+        instance.renderingGroupId = 0;
+        instance.instancedBuffers.color = edge.color
+            ? this.colorFromHex(edge.color, new Color4(0.8, 0.4, 0.8, 0.6))
+            : new Color4(0.8, 0.4, 0.8, 0.4);
+        instance.scaling.x = defaultThickness;
+        instance.scaling.y = defaultThickness;
+    }
+
+    /** De-emphasize off-route graph elements when Atlas has computed a path. */
+    applyRouteFocus(data: GraphData, nodeMeshes: Map<string, Mesh | InstancedMesh>) {
+        const active = this.hasActiveRoute(data);
+        this.routeFocusActive = active;
+        this.currentRouteSignature = this.routeSignature(data);
+
+        nodeMeshes.forEach((mesh) => {
+            const node = mesh.metadata as { color?: string; is_route?: boolean } | undefined;
+            if (!node) {
+                return;
+            }
+            const baseScaling = new Vector3(1, 1, 1);
+            if (active && !node.is_route) {
+                this.applyDimmedNode(mesh as InstancedMesh, node, baseScaling);
+            } else {
+                this.restoreNormalNode(mesh as InstancedMesh, node, baseScaling);
+            }
+        });
+
+        this.edgeInstances.forEach((edgeRef) => {
+            const edgeMeta = edgeRef.mesh.metadata as { color?: string; is_route?: boolean } | undefined;
+            if (!edgeMeta) {
+                return;
+            }
+            const defaultThickness = edgeMeta.is_route ? ROUTE_EDGE_THICKNESS : 1;
+            this.restoreEdgeInteractionState(edgeRef.mesh, edgeMeta, defaultThickness);
+        });
+
+        if (this.largeGraphBackgroundLines) {
+            this.largeGraphBackgroundLines.visibility = active ? 0.3 : 1;
+        }
+    }
+
+    private createRouteEdgeMaster(scene: Scene): Mesh {
+        const masterRouteEdge = MeshBuilder.CreateCylinder("master_route_edge_cylinder", {
+            height: 1,
+            diameter: 0.12,
+            tessellation: 12
+        }, scene);
+        masterRouteEdge.rotation.x = Math.PI / 2;
+        masterRouteEdge.bakeCurrentTransformIntoVertices();
+
+        const routeEdgeMaterial = new PBRMaterial("routeEdgeMat", scene);
+        const neon = Color3.FromHexString(ROUTE_NEON_HEX);
+        routeEdgeMaterial.albedoColor = neon;
+        routeEdgeMaterial.emissiveColor = neon.scale(0.95);
+        routeEdgeMaterial.metallic = 0.85;
+        routeEdgeMaterial.roughness = 0.12;
+        routeEdgeMaterial.alpha = 1;
+        masterRouteEdge.material = routeEdgeMaterial;
+        masterRouteEdge.isVisible = false;
+        masterRouteEdge.registerInstancedBuffer("color", 4);
+        masterRouteEdge.instancedBuffers.color = this.routeNeonColor4(1);
+        return masterRouteEdge;
     }
 
     private isLargeGraph(data: GraphData): boolean {
@@ -98,6 +292,7 @@ export class GraphRenderer {
         skip2DUI: boolean = false // NEW Param
     ) {
         const largeGraph = this.isLargeGraph(data);
+        const routeFocus = this.hasActiveRoute(data);
         // Create or reset Graph Root
         if (this.graphRoot) {
             this.graphRoot.dispose();
@@ -106,21 +301,21 @@ export class GraphRenderer {
 
         if (largeGraph) {
             const masters = new Map<string, Mesh>();
-            const getMaster = (hex: string | undefined) => {
-                const colorKey = hex || "#38bdf8";
+            const getMaster = (hex: string | undefined, isRoute = false) => {
+                const colorKey = isRoute ? ROUTE_NEON_HEX : (hex || "#38bdf8");
                 const existing = masters.get(colorKey);
                 if (existing) return existing;
 
                 const master = MeshBuilder.CreateSphere(`master_node_${colorKey.replace("#", "")}`, {
-                    diameter: 1.45,
-                    segments: 8
+                    diameter: isRoute ? 2.4 : 1.45,
+                    segments: isRoute ? 12 : 8
                 }, scene);
                 const material = new PBRMaterial(`nodeMat_${colorKey.replace("#", "")}`, scene);
                 const c = Color3.FromHexString(colorKey);
                 material.albedoColor = c;
-                material.emissiveColor = c.scale(0.35);
-                material.metallic = 0.45;
-                material.roughness = 0.35;
+                material.emissiveColor = isRoute ? c.scale(0.9) : c.scale(0.35);
+                material.metallic = isRoute ? 0.85 : 0.45;
+                material.roughness = isRoute ? 0.12 : 0.35;
                 master.material = material;
                 master.isVisible = false;
                 masters.set(colorKey, master);
@@ -128,12 +323,21 @@ export class GraphRenderer {
             };
 
             data.nodes.forEach(node => {
-                const master = getMaster(node.color);
+                const isRoute = !!node.is_route;
+                const master = getMaster(node.color, isRoute);
                 const instance = master.createInstance(node.id);
                 instance.parent = this.graphRoot;
                 instance.position = new Vector3(node.x, node.y, node.z);
                 instance.isPickable = false;
                 instance.metadata = { ...node, type: 'node' };
+                if (isRoute) {
+                    instance.renderingGroupId = ROUTE_RENDER_GROUP;
+                    instance.scaling = new Vector3(ROUTE_NODE_SCALE, ROUTE_NODE_SCALE, ROUTE_NODE_SCALE);
+                    instance.visibility = 1;
+                } else if (routeFocus) {
+                    instance.scaling = new Vector3(BACKGROUND_NODE_SCALE, BACKGROUND_NODE_SCALE, BACKGROUND_NODE_SCALE);
+                    instance.visibility = BACKGROUND_NODE_VISIBILITY;
+                }
                 nodeMeshes.set(node.id, instance);
             });
             return;
@@ -187,25 +391,35 @@ export class GraphRenderer {
             // ESSENTIAL: Attach metadata for VR/Web selection logic
             instance.metadata = { ...node, type: 'node' };
 
+            instance.actionManager = new ActionManager(scene);
+            const originalScaling = instance.scaling.clone();
+
             // Apply custom color if present
-            if (node.color) {
+            if (node.is_route) {
+                this.applyRouteNodeEmphasis(instance, originalScaling);
+            } else if (routeFocus) {
+                this.applyDimmedNode(instance, node, originalScaling);
+            } else if (node.color) {
                 const c = Color3.FromHexString(node.color);
                 instance.instancedBuffers.color = new Color4(c.r, c.g, c.b, 1);
             }
 
-            instance.actionManager = new ActionManager(scene);
-            const originalScaling = instance.scaling.clone();
-
             instance.actionManager.registerAction(
                 new ExecuteCodeAction(ActionManager.OnPointerOverTrigger, () => {
-                    // Scale up
-                    instance.scaling = originalScaling.scale(1.3);
+                    if (node.is_route) {
+                        instance.scaling = originalScaling.scale(ROUTE_NODE_SCALE * 1.12);
+                        instance.outlineColor = Color3.White();
+                        instance.outlineWidth = 0.14;
+                        instance.instancedBuffers.color = new Color4(0.85, 1, 0.65, 1);
+                    } else {
+                        instance.scaling = originalScaling.scale(1.3);
+                        instance.renderOutline = true;
+                        instance.outlineColor = Color3.White();
+                        instance.outlineWidth = 0.1;
+                        instance.instancedBuffers.color = new Color4(0.8, 1, 1, 1);
+                    }
 
                     instance.renderOutline = true;
-                    instance.outlineColor = Color3.White();
-                    instance.outlineWidth = 0.1;
-                    // Bright white/cyan on hover
-                    instance.instancedBuffers.color = new Color4(0.8, 1, 1, 1);
 
                     // Show Tooltip (Web)
                     if (this.tooltip && (node.label || node.id)) {
@@ -224,17 +438,7 @@ export class GraphRenderer {
             );
             instance.actionManager.registerAction(
                 new ExecuteCodeAction(ActionManager.OnPointerOutTrigger, () => {
-                    // Scale down
-                    instance.scaling = originalScaling;
-
-                    instance.renderOutline = false;
-                    // Reset color
-                    if (node.color) {
-                        const c = Color3.FromHexString(node.color);
-                        instance.instancedBuffers.color = new Color4(c.r, c.g, c.b, 1);
-                    } else {
-                        instance.instancedBuffers.color = new Color4(0.1, 0.6, 0.9, 1);
-                    }
+                    this.restoreNodeInteractionState(instance, node, originalScaling);
 
                     // Hide Tooltip (Web)
                     if (this.tooltip) {
@@ -246,11 +450,9 @@ export class GraphRenderer {
             );
             instance.actionManager.registerAction(
                 new ExecuteCodeAction(ActionManager.OnPickTrigger, () => {
-                    // Visual feedback on click (Flash white)
                     instance.instancedBuffers.color = new Color4(1, 1, 1, 1);
                     setTimeout(() => {
-                        // Return to hover state
-                        instance.instancedBuffers.color = new Color4(0.5, 0.8, 1, 1);
+                        this.restoreNodeInteractionState(instance, node, originalScaling);
                     }, 200);
 
                     if (onSelect) onSelect(node, 'node');
@@ -277,29 +479,62 @@ export class GraphRenderer {
         xrHelperRef?: { current: any }
     ) {
         const largeGraph = this.isLargeGraph(data);
+        const routeFocus = this.hasActiveRoute(data);
         // Clear previous edge references
         this.edgeInstances = [];
+        this.largeGraphBackgroundLines = null;
 
         if (largeGraph) {
             const lines: Vector3[][] = [];
             const colors: Color4[][] = [];
-            data.edges.forEach(edge => {
+            const routeEdges = data.edges.filter((edge) => edge.is_route);
+            const backgroundEdges = data.edges.filter((edge) => !edge.is_route);
+
+            backgroundEdges.forEach(edge => {
                 const sourceMesh = nodeMeshes.get(String(edge.source));
                 const targetMesh = nodeMeshes.get(String(edge.target));
                 if (!sourceMesh || !targetMesh) return;
                 lines.push([sourceMesh.position.clone(), targetMesh.position.clone()]);
+                const bgAlpha = routeFocus ? BACKGROUND_LARGE_LINE_ALPHA : BACKGROUND_LARGE_LINE_ALPHA_NORMAL;
                 const edgeColor = edge.color
-                    ? this.colorFromHex(edge.color, new Color4(0.8, 0.4, 0.8, edge.is_route ? 1 : 0.35))
-                    : new Color4(0.8, 0.4, 0.8, edge.is_route ? 1 : 0.25);
+                    ? this.colorFromHex(edge.color, new Color4(0.8, 0.4, 0.8, bgAlpha))
+                    : new Color4(0.8, 0.4, 0.8, bgAlpha);
                 colors.push([edgeColor, edgeColor]);
             });
-            const lineSystem = MeshBuilder.CreateLineSystem(
-                "large_graph_edges",
-                { lines, colors, updatable: false },
-                scene
-            );
-            lineSystem.parent = this.graphRoot;
-            lineSystem.isPickable = false;
+            if (lines.length > 0) {
+                const lineSystem = MeshBuilder.CreateLineSystem(
+                    "large_graph_edges",
+                    { lines, colors, updatable: false },
+                    scene
+                );
+                lineSystem.parent = this.graphRoot;
+                lineSystem.isPickable = false;
+                this.largeGraphBackgroundLines = lineSystem;
+            }
+
+            if (routeEdges.length > 0) {
+                const masterRouteEdge = this.createRouteEdgeMaster(scene);
+                routeEdges.forEach(edge => {
+                    const sourceMesh = nodeMeshes.get(String(edge.source));
+                    const targetMesh = nodeMeshes.get(String(edge.target));
+                    if (!sourceMesh || !targetMesh) return;
+
+                    const instance = masterRouteEdge.createInstance(`route_edge_${edge.source}_${edge.target}`);
+                    instance.parent = this.graphRoot;
+                    instance.isPickable = false;
+                    instance.renderingGroupId = ROUTE_RENDER_GROUP;
+                    instance.instancedBuffers.color = this.routeNeonColor4(1);
+                    instance.scaling.x = ROUTE_EDGE_THICKNESS;
+                    instance.scaling.y = ROUTE_EDGE_THICKNESS;
+
+                    const p1 = sourceMesh.position;
+                    const p2 = targetMesh.position;
+                    instance.position = Vector3.Center(p1, p2);
+                    instance.scaling.z = Vector3.Distance(p1, p2);
+                    instance.lookAt(p2);
+                });
+            }
+            this.applyRouteFocus(data, nodeMeshes);
             return;
         }
 
@@ -330,12 +565,16 @@ export class GraphRenderer {
         masterEdge.registerInstancedBuffer("color", 4);
         masterEdge.instancedBuffers.color = new Color4(0.8, 0.4, 0.8, 0.6);
 
+        const masterRouteEdge = this.createRouteEdgeMaster(scene);
+
         data.edges.forEach(edge => {
             const sourceMesh = nodeMeshes.get(String(edge.source));
             const targetMesh = nodeMeshes.get(String(edge.target));
 
             if (sourceMesh && targetMesh) {
-                const instance = masterEdge.createInstance(`edge_${edge.source}_${edge.target}`);
+                const isRoute = !!edge.is_route;
+                const edgeMaster = isRoute ? masterRouteEdge : masterEdge;
+                const instance = edgeMaster.createInstance(`edge_${edge.source}_${edge.target}`);
 
                 // Parent to graphRoot
                 instance.parent = this.graphRoot;
@@ -373,13 +612,22 @@ export class GraphRenderer {
                 // Ensure visibility
                 instance.isVisible = true;
 
-                const defaultEdgeColor = edge.color
-                    ? this.colorFromHex(edge.color, new Color4(0.8, 0.4, 0.8, edge.is_route ? 1 : 0.6))
-                    : new Color4(0.8, 0.4, 0.8, edge.is_route ? 1 : 0.4);
-                const defaultThickness = edge.is_route ? 3 : 1;
-                instance.instancedBuffers.color = defaultEdgeColor;
-                instance.scaling.x = defaultThickness;
-                instance.scaling.y = defaultThickness;
+                const defaultEdgeColor = isRoute
+                    ? this.routeNeonColor4(1)
+                    : edge.color
+                        ? this.colorFromHex(edge.color, new Color4(0.8, 0.4, 0.8, 0.6))
+                        : new Color4(0.8, 0.4, 0.8, 0.4);
+                const defaultThickness = isRoute ? ROUTE_EDGE_THICKNESS : 1;
+                if (routeFocus && !isRoute) {
+                    this.applyDimmedEdge(instance, edge);
+                } else {
+                    instance.instancedBuffers.color = defaultEdgeColor;
+                    instance.scaling.x = defaultThickness;
+                    instance.scaling.y = defaultThickness;
+                }
+                if (isRoute) {
+                    instance.renderingGroupId = ROUTE_RENDER_GROUP;
+                }
 
                 // Interactions (VR et Web)
                 instance.metadata = { ...edge, type: 'edge' }; // Attach edge data as metadata
@@ -388,9 +636,15 @@ export class GraphRenderer {
 
                 instance.actionManager.registerAction(
                     new ExecuteCodeAction(ActionManager.OnPointerOverTrigger, () => {
-                        instance.instancedBuffers.color = new Color4(1, 0.6, 1, 1); // Highlight
-                        instance.scaling.x = 4; // Thicker on hover
-                        instance.scaling.y = 4;
+                        if (isRoute) {
+                            instance.instancedBuffers.color = new Color4(0.75, 1, 0.55, 1);
+                            instance.scaling.x = ROUTE_EDGE_THICKNESS * 1.15;
+                            instance.scaling.y = ROUTE_EDGE_THICKNESS * 1.15;
+                        } else {
+                            instance.instancedBuffers.color = new Color4(1, 0.6, 1, 1);
+                            instance.scaling.x = 4;
+                            instance.scaling.y = 4;
+                        }
                     })
                 );
 
@@ -402,18 +656,15 @@ export class GraphRenderer {
 
                 instance.actionManager.registerAction(
                     new ExecuteCodeAction(ActionManager.OnPointerOutTrigger, () => {
-                        instance.instancedBuffers.color = defaultEdgeColor; // Reset
-                        instance.scaling.x = defaultThickness;
-                        instance.scaling.y = defaultThickness;
+                        this.restoreEdgeInteractionState(instance, edge, defaultThickness);
                     })
                 );
 
                 instance.actionManager.registerAction(
                     new ExecuteCodeAction(ActionManager.OnPickTrigger, () => {
-                        // Visual feedback
                         instance.instancedBuffers.color = new Color4(1, 1, 1, 1);
                         setTimeout(() => {
-                            instance.instancedBuffers.color = new Color4(1, 0.6, 1, 1);
+                            this.restoreEdgeInteractionState(instance, edge, defaultThickness);
                         }, 200);
 
                         // Sélection VR et Web
@@ -425,6 +676,7 @@ export class GraphRenderer {
                 );
             }
         });
+        this.applyRouteFocus(data, nodeMeshes);
     }
 
     setupVRInteractions(nodeMeshes: Map<string, Mesh | InstancedMesh>, nodeIds: string[]) {
@@ -442,6 +694,11 @@ export class GraphRenderer {
         data: GraphData,
         nodeMeshes: Map<string, Mesh | InstancedMesh>
     ): boolean {
+        const nextRouteSignature = this.routeSignature(data);
+        if (this.currentRouteSignature !== nextRouteSignature) {
+            return false;
+        }
+
         // Check if we have the same nodes
         const existingIds = new Set(nodeMeshes.keys());
         const newIds = new Set(data.nodes.map(n => n.id));
@@ -486,6 +743,7 @@ export class GraphRenderer {
             }
         });
 
+        this.applyRouteFocus(data, nodeMeshes);
         return true;
     }
 
@@ -682,6 +940,9 @@ export class GraphRenderer {
         }
         this.disposeLabelControls();
         this.disposeUiTooltip();
+        this.routeFocusActive = false;
+        this.currentRouteSignature = 'none';
+        this.largeGraphBackgroundLines = null;
         // Clear edge references
         this.edgeInstances = [];
 

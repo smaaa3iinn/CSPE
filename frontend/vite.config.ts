@@ -18,6 +18,9 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     envDir: repoRoot,
+    test: {
+      environment: "jsdom",
+    },
     preview: {
       host: "0.0.0.0",
       port: 5173,

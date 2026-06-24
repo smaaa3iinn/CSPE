@@ -41,7 +41,7 @@ function ingestStructuredOutputs(outputs: StructuredOutput[]) {
   return { assistantText };
 }
 
-type TransportMode = "all" | "metro" | "rail" | "tram" | "bus" | "other";
+type TransportMode = "all" | "all_mb" | "metro" | "rail" | "tram" | "bus" | "other";
 
 type State = {
   mode: AppMode;
@@ -75,6 +75,8 @@ type State = {
   atlasTransportActionSeq: number;
   /** Transport map: hide HUD panels for full-bleed map (toggle with F). */
   transportMapChromeHidden: boolean;
+  /** Non-blocking warning when shell poll/SSE repeatedly fails. */
+  shellSyncWarning: string | null;
   setMode: (m: AppMode) => void;
   appendUserMessage: (text: string) => void;
   appendChatExploration: (
@@ -108,6 +110,7 @@ type State = {
   syncAtlasVoiceUi: (outputs: StructuredOutput[]) => void;
   setTransportMapChromeHidden: (hidden: boolean) => void;
   toggleTransportMapChromeHidden: () => void;
+  setShellSyncWarning: (msg: string | null) => void;
 };
 
 export const useAppStore = create<State>((set) => ({
@@ -116,7 +119,7 @@ export const useAppStore = create<State>((set) => ({
   chatLoading: false,
   chatError: null,
   lastStructuredOutputs: [],
-  transportGraphMode: "metro",
+  transportGraphMode: "all_mb",
   transportUseLcc: false,
   transportViz: "geographic",
   transportGraphViz: "station",
@@ -136,6 +139,7 @@ export const useAppStore = create<State>((set) => ({
   atlasTransportActions: [],
   atlasTransportActionSeq: 0,
   transportMapChromeHidden: false,
+  shellSyncWarning: null,
 
   setMode: () => set({ mode: "transport" }),
   appendUserMessage: (text) =>
@@ -229,4 +233,5 @@ export const useAppStore = create<State>((set) => ({
   setTransportMapChromeHidden: (hidden) => set({ transportMapChromeHidden: hidden }),
   toggleTransportMapChromeHidden: () =>
     set((s) => ({ transportMapChromeHidden: !s.transportMapChromeHidden })),
+  setShellSyncWarning: (msg) => set({ shellSyncWarning: msg }),
 }));

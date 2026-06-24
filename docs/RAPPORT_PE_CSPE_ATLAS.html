@@ -1,0 +1,2223 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>RAPPORT_PE_CSPE_ATLAS.md</title>
+<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+
+<style>
+/* https://github.com/microsoft/vscode/blob/master/extensions/markdown-language-features/media/markdown.css */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+body {
+	font-family: var(--vscode-markdown-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif);
+	font-size: var(--vscode-markdown-font-size, 14px);
+	padding: 0 26px;
+	line-height: var(--vscode-markdown-line-height, 22px);
+	word-wrap: break-word;
+}
+
+#code-csp-warning {
+	position: fixed;
+	top: 0;
+	right: 0;
+	color: white;
+	margin: 16px;
+	text-align: center;
+	font-size: 12px;
+	font-family: sans-serif;
+	background-color:#444444;
+	cursor: pointer;
+	padding: 6px;
+	box-shadow: 1px 1px 1px rgba(0,0,0,.25);
+}
+
+#code-csp-warning:hover {
+	text-decoration: none;
+	background-color:#007acc;
+	box-shadow: 2px 2px 2px rgba(0,0,0,.25);
+}
+
+body.scrollBeyondLastLine {
+	margin-bottom: calc(100vh - 22px);
+}
+
+body.showEditorSelection .code-line {
+	position: relative;
+}
+
+body.showEditorSelection .code-active-line:before,
+body.showEditorSelection .code-line:hover:before {
+	content: "";
+	display: block;
+	position: absolute;
+	top: 0;
+	left: -12px;
+	height: 100%;
+}
+
+body.showEditorSelection li.code-active-line:before,
+body.showEditorSelection li.code-line:hover:before {
+	left: -30px;
+}
+
+.vscode-light.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.40);
+}
+
+.vscode-light.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-dark.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.4);
+}
+
+.vscode-dark.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.60);
+}
+
+.vscode-dark.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-high-contrast.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 160, 0, 0.7);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 160, 0, 1);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+img {
+	max-width: 100%;
+	max-height: 100%;
+}
+
+a {
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+a:focus,
+input:focus,
+select:focus,
+textarea:focus {
+	outline: 1px solid -webkit-focus-ring-color;
+	outline-offset: -1px;
+}
+
+hr {
+	border: 0;
+	height: 2px;
+	border-bottom: 2px solid;
+}
+
+h1 {
+	padding-bottom: 0.3em;
+	line-height: 1.2;
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+h1, h2, h3 {
+	font-weight: normal;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+table > thead > tr > th {
+	text-align: left;
+	border-bottom: 1px solid;
+}
+
+table > thead > tr > th,
+table > thead > tr > td,
+table > tbody > tr > th,
+table > tbody > tr > td {
+	padding: 5px 10px;
+}
+
+table > tbody > tr + tr > td {
+	border-top: 1px solid;
+}
+
+blockquote {
+	margin: 0 7px 0 5px;
+	padding: 0 16px 0 10px;
+	border-left-width: 5px;
+	border-left-style: solid;
+}
+
+code {
+	font-family: Menlo, Monaco, Consolas, "Droid Sans Mono", "Courier New", monospace, "Droid Sans Fallback";
+	font-size: 1em;
+	line-height: 1.357em;
+}
+
+body.wordWrap pre {
+	white-space: pre-wrap;
+}
+
+pre:not(.hljs),
+pre.hljs code > div {
+	padding: 16px;
+	border-radius: 3px;
+	overflow: auto;
+}
+
+pre code {
+	color: var(--vscode-editor-foreground);
+	tab-size: 4;
+}
+
+/** Theming */
+
+.vscode-light pre {
+	background-color: rgba(220, 220, 220, 0.4);
+}
+
+.vscode-dark pre {
+	background-color: rgba(10, 10, 10, 0.4);
+}
+
+.vscode-high-contrast pre {
+	background-color: rgb(0, 0, 0);
+}
+
+.vscode-high-contrast h1 {
+	border-color: rgb(0, 0, 0);
+}
+
+.vscode-light table > thead > tr > th {
+	border-color: rgba(0, 0, 0, 0.69);
+}
+
+.vscode-dark table > thead > tr > th {
+	border-color: rgba(255, 255, 255, 0.69);
+}
+
+.vscode-light h1,
+.vscode-light hr,
+.vscode-light table > tbody > tr + tr > td {
+	border-color: rgba(0, 0, 0, 0.18);
+}
+
+.vscode-dark h1,
+.vscode-dark hr,
+.vscode-dark table > tbody > tr + tr > td {
+	border-color: rgba(255, 255, 255, 0.18);
+}
+
+</style>
+
+<style>
+/* Tomorrow Theme */
+/* http://jmblog.github.com/color-themes-for-google-code-highlightjs */
+/* Original theme - https://github.com/chriskempson/tomorrow-theme */
+
+/* Tomorrow Comment */
+.hljs-comment,
+.hljs-quote {
+	color: #8e908c;
+}
+
+/* Tomorrow Red */
+.hljs-variable,
+.hljs-template-variable,
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-regexp,
+.hljs-deletion {
+	color: #c82829;
+}
+
+/* Tomorrow Orange */
+.hljs-number,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-meta,
+.hljs-link {
+	color: #f5871f;
+}
+
+/* Tomorrow Yellow */
+.hljs-attribute {
+	color: #eab700;
+}
+
+/* Tomorrow Green */
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+	color: #718c00;
+}
+
+/* Tomorrow Blue */
+.hljs-title,
+.hljs-section {
+	color: #4271ae;
+}
+
+/* Tomorrow Purple */
+.hljs-keyword,
+.hljs-selector-tag {
+	color: #8959a8;
+}
+
+.hljs {
+	display: block;
+	overflow-x: auto;
+	color: #4d4d4c;
+	padding: 0.5em;
+}
+
+.hljs-emphasis {
+	font-style: italic;
+}
+
+.hljs-strong {
+	font-weight: bold;
+}
+</style>
+
+<style>
+/*
+ * Markdown PDF CSS
+ */
+
+ body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif, "Meiryo";
+	padding: 0 12px;
+}
+
+pre {
+	background-color: #f8f8f8;
+	border: 1px solid #cccccc;
+	border-radius: 3px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+
+pre:not(.hljs) {
+	padding: 23px;
+	line-height: 19px;
+}
+
+blockquote {
+	background: rgba(127, 127, 127, 0.1);
+	border-color: rgba(0, 122, 204, 0.5);
+}
+
+.emoji {
+	height: 1.4em;
+}
+
+code {
+	font-size: 14px;
+	line-height: 19px;
+}
+
+/* for inline code */
+:not(pre):not(.hljs) > code {
+	color: #C9AE75; /* Change the old color so it seems less like an error */
+	font-size: inherit;
+}
+
+/* Page Break : use <div class="page"/> to insert page break
+-------------------------------------------------------- */
+.page {
+	page-break-after: always;
+}
+
+</style>
+
+<script src="https://unpkg.com/mermaid/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: document.body.classList.contains('vscode-dark') || document.body.classList.contains('vscode-high-contrast')
+          ? 'dark'
+          : 'default'
+    });
+  </script>
+<h1 id="page-de-garde">Page de garde</h1>
+<p><strong>Titre officiel du projet (P26)</strong><br>
+Couplage de la visualisation immersive avec une architecture agentique IA pour une interaction voice-to-command dédiée à l’exploration d’un graphe complexe de réseau de transport</p>
+<p><strong>Titre de travail</strong><br>
+Couplage de la visualisation immersive avec une architecture agentique IA pour l’exploration vocale d’un graphe de transport — Prototype ATLAS</p>
+<hr>
+<p><strong>Étudiant :</strong> Ismail KHOUNA<br>
+<strong>Tuteur Projet Étudiant :</strong> Babiga BIRREGAH<br>
+<strong>Établissement :</strong> Université de Technologie de Troyes (UTT)<br>
+<strong>Formation :</strong> CSPE — 6 ECTS CS TCBR<br>
+<strong>Volume estimé :</strong> 150 heures<br>
+<strong>Semestre :</strong> [À COMPLÉTER : semestre et année universitaire exacts, par ex. S2 2025–2026]</p>
+<p><strong>Projet Étudiant — CSPE / MIND</strong></p>
+<hr>
+<h1 id="r%C3%A9sum%C3%A9">Résumé</h1>
+<p>Ce Projet Étudiant propose un <strong>prototype fonctionnel démontrable</strong> répondant au sujet officiel P26 : coupler visualisation immersive, architecture agentique IA et interaction voice-to-command pour l’exploration d’un graphe complexe de réseau de transport. L’objectif est de permettre à un utilisateur d’explorer un réseau de transport en combinant un <strong>graphe GTFS</strong> modélisant le réseau Île-de-France, des <strong>interfaces de visualisation</strong> (carte 2D Mapbox et module immersif GraphXR 3D/VR), et un <strong>agent IA conversationnel</strong> capable d’interpréter des commandes naturelles, principalement vocales.</p>
+<p>Dans ce prototype, l’agent IA conversationnel a été nommé <strong>ATLAS</strong>. Ce nom désigne la couche d’orchestration chargée d’interpréter les commandes utilisateur et de déclencher les outils adaptés ; il ne correspond pas à une exigence explicite du cahier des charges, qui demandait un agent orchestrateur couplé à la visualisation immersive et à la commande vocale.</p>
+<p>L’architecture repose sur trois blocs principaux — agent IA, moteur transport basé sur un graphe GTFS, et interfaces de visualisation 2D/3D/VR — reliés par un <strong>backend FastAPI</strong> jouant le rôle de couche d’intégration. OpenAI ne pilote pas directement l’application de manière libre : il interprète la demande utilisateur, identifie l’intention et sélectionne des outils codés (<code>cspe_*</code>), exécutés ensuite par le backend pour interagir avec le graphe, la carte ou GraphXR.</p>
+<p>Le prototype obtenu permet de calculer des itinéraires, rechercher des stations, explorer des POI, afficher des résultats sur une carte 2D, ouvrir une visualisation 3D/VR synchronisée, et obtenir des enrichissements secondaires via des API externes (IDFM/Navitia, recherche web). Le calcul d’itinéraire repose principalement sur le <strong>nombre de sauts</strong> dans le graphe, enrichi par un résumé distance/temps ; il ne constitue pas un moteur de routage temps réel comparable à des applications grand public.</p>
+<p>Les principales limites concernent la complétude des données, le coût de construction initiale du graphe (nécessité d’un bundle pré-calculé), la latence de la chaîne voix → IA → backend → interface, et des bugs occasionnels de synchronisation entre la réponse de l’agent et la mise à jour de la carte ou de GraphXR. Le mode VR sur Meta Quest a été validé en démonstration, avec une configuration HTTPS via proxy/ngrok. Le projet vise une démonstration académique, sans objectif d’industrialisation.</p>
+<p><strong>Mots-clés :</strong> graphe de transport, GTFS, NetworkX, agent IA, tool-calling, visualisation immersive, WebXR, FastAPI, React, Mapbox, GraphXR, exploration vocale, voice-to-command.</p>
+<hr>
+<h1 id="table-des-mati%C3%A8res">Table des matières</h1>
+<p><strong>1. <a href="#1-introduction">Introduction</a></strong><br>
+    1.1 <a href="#11-contexte-g%C3%A9n%C3%A9ral">Contexte général</a><br>
+    1.2 <a href="#12-probl%C3%A9matique">Problématique</a><br>
+    1.3 <a href="#13-objectifs-du-projet">Objectifs du projet</a><br>
+    1.4 <a href="#14-p%C3%A9rim%C3%A8tre-du-prototype">Périmètre du prototype</a><br>
+    1.5 <a href="#15-organisation-du-rapport">Organisation du rapport</a></p>
+<p><strong>2. <a href="#2-d%C3%A9marche-men%C3%A9e-et-analyse-du-besoin">Démarche menée et analyse du besoin</a></strong><br>
+    2.1 <a href="#21-compr%C3%A9hension-du-contexte">Compréhension du contexte</a><br>
+    2.2 <a href="#22-public-cible-et-cas-dusage">Public cible et cas d’usage</a><br>
+    2.3 <a href="#23-besoins-fonctionnels">Besoins fonctionnels</a><br>
+        2.3.1 <a href="#231-besoins-critiques">Besoins critiques</a><br>
+        2.3.2 <a href="#232-besoins-importants">Besoins importants</a><br>
+        2.3.3 <a href="#233-besoins-souhaitables">Besoins souhaitables</a><br>
+    2.4 <a href="#24-contraintes-du-projet">Contraintes du projet</a><br>
+        2.4.1 <a href="#241-contraintes-p%C3%A9dagogiques">Contraintes pédagogiques</a><br>
+        2.4.2 <a href="#242-contraintes-techniques">Contraintes techniques</a><br>
+        2.4.3 <a href="#243-contraintes-organisationnelles">Contraintes organisationnelles</a><br>
+    2.5 <a href="#25-%C3%A9tat-de-lart-et-positionnement">État de l’art et positionnement</a><br>
+        2.5.1 <a href="#251-graphes-de-transport-et-gtfs">Graphes de transport et GTFS</a><br>
+        2.5.2 <a href="#252-visualisation-2d-3d-et-vr">Visualisation 2D, 3D et VR</a><br>
+        2.5.3 <a href="#253-agents-ia-et-tool-calling">Agents IA et tool-calling</a><br>
+        2.5.4 <a href="#254-positionnement-du-prototype">Positionnement du prototype</a></p>
+<p><strong>3. <a href="#3-conception-et-architecture-du-prototype">Conception et architecture du prototype</a></strong><br>
+    3.1 <a href="#31-architecture-g%C3%A9n%C3%A9rale">Architecture générale</a><br>
+        3.1.1 <a href="#311-bloc-agent-ia">Bloc agent IA</a><br>
+        3.1.2 <a href="#312-bloc-transport-et-donn%C3%A9es">Bloc transport et données</a><br>
+        3.1.3 <a href="#313-bloc-visualisation">Bloc visualisation</a><br>
+        3.1.4 <a href="#314-backend-fastapi-comme-couche-dint%C3%A9gration">Backend FastAPI comme couche d’intégration</a><br>
+        3.1.5 <a href="#315-diagramme-darchitecture-globale">Diagramme d’architecture globale</a><br>
+        3.1.6 <a href="#316-s%C3%A9quence-dune-commande-utilisateur">Séquence d’une commande utilisateur</a><br>
+    3.2 <a href="#32-donn%C3%A9es-et-graphe-de-transport">Données et graphe de transport</a><br>
+        3.2.1 <a href="#321-donn%C3%A9es-gtfs">Données GTFS</a><br>
+        3.2.2 <a href="#322-transformation-en-graphe">Transformation en graphe</a><br>
+        3.2.3 <a href="#323-moteur-transport">Moteur transport</a><br>
+        3.2.4 <a href="#324-routage-et-limites">Routage et limites</a><br>
+        3.2.5 <a href="#325-poi-et-enrichissements">POI et enrichissements</a><br>
+    3.3 <a href="#33-agent-ia-conversationnel">Agent IA conversationnel</a><br>
+        3.3.1 <a href="#331-r%C3%B4le-de-lagent-orchestrateur">Rôle de l’agent orchestrateur</a><br>
+        3.3.2 <a href="#332-interaction-vocale-et-mode-texte">Interaction vocale et mode texte</a><br>
+        3.3.3 <a href="#333-outils-contr%C3%B4l%C3%A9s-par-lagent">Outils contrôlés par l’agent</a><br>
+        3.3.4 <a href="#334-mod%C3%A8les-locaux-choix-dopenai-et-r%C3%A9ponse-naturelle">Modèles locaux, choix d’OpenAI et réponse naturelle</a><br>
+    3.4 <a href="#34-visualisation-2d-3d-et-vr">Visualisation 2D, 3D et VR</a><br>
+        3.4.1 <a href="#341-interface-reactvite">Interface React/Vite</a><br>
+        3.4.2 <a href="#342-carte-2d">Carte 2D</a><br>
+        3.4.3 <a href="#343-int%C3%A9gration-graphxr">Intégration GraphXR</a><br>
+        3.4.4 <a href="#344-mode-vr-et-webxr">Mode VR et WebXR</a><br>
+        3.4.5 <a href="#345-compl%C3%A9mentarit%C3%A9-2d--3d--vr">Complémentarité 2D / 3D / VR</a><br>
+        3.4.6 <a href="#346-synchronisation-interface--agent">Synchronisation interface / agent</a></p>
+<p><strong>4. <a href="#4-r%C3%A9alisation-tests-et-validation">Réalisation, tests et validation</a></strong><br>
+    4.1 <a href="#41-organisation-du-d%C3%A9veloppement">Organisation du développement</a><br>
+        4.1.1 <a href="#411-cadrage-et-construction-du-graphe">Cadrage et construction du graphe</a><br>
+        4.1.2 <a href="#412-d%C3%A9veloppement-progressif-des-modules">Développement progressif des modules</a><br>
+        4.1.3 <a href="#413-travail-solo-et-pistes-abandonn%C3%A9es">Travail solo et pistes abandonnées</a><br>
+    4.2 <a href="#42-sc%C3%A9narios-de-validation">Scénarios de validation</a><br>
+    4.3 <a href="#43-r%C3%A9sultats-observ%C3%A9s">Résultats observés</a><br>
+    4.4 <a href="#44-limites-du-prototype">Limites du prototype</a></p>
+<p><strong>5. <a href="#5-bilan-critique-et-perspectives">Bilan critique et perspectives</a></strong><br>
+    5.1 <a href="#51-bilan-technique">Bilan technique</a><br>
+    5.2 <a href="#52-bilan-organisationnel">Bilan organisationnel</a><br>
+    5.3 <a href="#53-bilan-personnel">Bilan personnel</a><br>
+    5.4 <a href="#54-perspectives-dam%C3%A9lioration">Perspectives d’amélioration</a></p>
+<p><strong>6. <a href="#6-conclusion-g%C3%A9n%C3%A9rale">Conclusion générale</a></strong></p>
+<p><a href="#r%C3%A9f%C3%A9rences">Références</a></p>
+<p><a href="#annexes">Annexes</a><br>
+    <a href="#annexe-a--pipeline-gtfs-vers-graphe">Annexe A — Pipeline GTFS vers graphe</a><br>
+    <a href="#annexe-b--endpoints-api-principaux">Annexe B — Endpoints API principaux</a><br>
+    <a href="#annexe-c--catalogue-des-outils-de-lagent">Annexe C — Catalogue des outils de l’agent</a><br>
+    <a href="#annexe-d--sc%C3%A9narios-de-test-d%C3%A9taill%C3%A9s">Annexe D — Scénarios de test détaillés</a><br>
+    <a href="#annexe-e--logs">Annexe E — Logs</a><br>
+    <a href="#annexe-f--configuration-vr--quest--https">Annexe F — Configuration VR / Quest / HTTPS</a><br>
+    <a href="#annexe-g--captures-%C3%A0-ajouter">Annexe G — Captures à ajouter</a><br>
+    <a href="#annexe-h--guide-de-d%C3%A9monstration">Annexe H — Guide de démonstration</a><br>
+    <a href="#annexe-i--variables-denvironnement-noms-uniquement">Annexe I — Variables d’environnement</a></p>
+<p><a href="#points-%C3%A0-v%C3%A9rifier-manuellement-avant-export-pdf">Points à vérifier manuellement avant export PDF</a></p>
+<hr>
+<h1 id="liste-des-figures">Liste des figures</h1>
+<table>
+<thead>
+<tr>
+<th>N°</th>
+<th>Titre</th>
+<th>Emplacement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Figure 1</td>
+<td>Architecture globale IA / Transport / Visualisation / Backend FastAPI</td>
+<td>Section 3.1.5</td>
+</tr>
+<tr>
+<td>Figure 2</td>
+<td>Séquence d’une commande vocale</td>
+<td>Section 3.1.6</td>
+</tr>
+<tr>
+<td>Figure 3</td>
+<td>Pipeline données GTFS vers graphe transport</td>
+<td>Section 3.2.2</td>
+</tr>
+<tr>
+<td>Figure 4</td>
+<td>Modules backend FastAPI et flux de commandes UI</td>
+<td>Section 3.4.6</td>
+</tr>
+<tr>
+<td>Figure 5</td>
+<td>Interface principale avec carte 2D et rail agent IA</td>
+<td>Section 3.4.2</td>
+</tr>
+<tr>
+<td>Figure 6</td>
+<td>GraphXR affichant un graphe 3D de transport</td>
+<td>Section 3.4.3</td>
+</tr>
+<tr>
+<td>Figure 7</td>
+<td>Mode VR / Quest ou interface WebXR</td>
+<td>Section 3.4.4</td>
+</tr>
+<tr>
+<td>Figure 8</td>
+<td>Commande vocale ou texte demandant un itinéraire</td>
+<td>Section 4.2</td>
+</tr>
+<tr>
+<td>Figure 9</td>
+<td>Réponse de l’agent après calcul d’itinéraire</td>
+<td>Section 4.3</td>
+</tr>
+<tr>
+<td>Figure 10</td>
+<td>Carte 2D affichant un itinéraire</td>
+<td>Section 4.3</td>
+</tr>
+<tr>
+<td>Figure 11</td>
+<td>Recherche de station</td>
+<td>Section 4.3</td>
+</tr>
+<tr>
+<td>Figure 12</td>
+<td>POI autour d’une station</td>
+<td>Section 4.3</td>
+</tr>
+<tr>
+<td>Figure 13</td>
+<td>Prochains départs / enrichissement IDFM</td>
+<td>Section 4.3</td>
+</tr>
+<tr>
+<td>Figure 14</td>
+<td>Logs ou console de test</td>
+<td>Section 4.3</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h1 id="liste-des-tableaux">Liste des tableaux</h1>
+<table>
+<thead>
+<tr>
+<th>N°</th>
+<th>Titre</th>
+<th>Emplacement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tableau 1</td>
+<td>Besoins fonctionnels (critiques / importants / souhaitables)</td>
+<td>Section 2.3</td>
+</tr>
+<tr>
+<td>Tableau 2</td>
+<td>Contraintes du projet</td>
+<td>Section 2.4</td>
+</tr>
+<tr>
+<td>Tableau 3</td>
+<td>Processus et ports du prototype</td>
+<td>Section 3.1.4</td>
+</tr>
+<tr>
+<td>Tableau 4</td>
+<td>Fichiers GTFS utilisés</td>
+<td>Section 3.2.1</td>
+</tr>
+<tr>
+<td>Tableau 5</td>
+<td>Catalogue des outils <code>cspe_*</code></td>
+<td>Section 3.3.3 / Annexe C</td>
+</tr>
+<tr>
+<td>Tableau 6</td>
+<td>Endpoints API principaux</td>
+<td>Section 3.1.4 / Annexe B</td>
+</tr>
+<tr>
+<td>Tableau 7</td>
+<td>Scénarios de test et résultats attendus</td>
+<td>Section 4.3 / Annexe D</td>
+</tr>
+<tr>
+<td>Tableau 8</td>
+<td>Variables d’environnement (noms uniquement)</td>
+<td>Annexe I</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h1 id="1-introduction">1. Introduction</h1>
+<h2 id="11-contexte-g%C3%A9n%C3%A9ral">1.1 Contexte général</h2>
+<p>Les réseaux de transport public peuvent être modélisés comme des <strong>graphes complexes</strong> : les <strong>stations</strong> et <strong>arrêts</strong> forment des nœuds, les <strong>lignes</strong> et <strong>trajets</strong> des arêtes, les <strong>correspondances</strong> des liens de transfert, et des <strong>points d’intérêt (POI)</strong> ou <strong>métadonnées</strong> viennent enrichir la lecture du réseau. Dans le cas de l’Île-de-France, le format standard <strong>GTFS</strong> (General Transit Feed Specification) permet de décrire ces éléments de manière structurée.</p>
+<p>Une exploration limitée à une <strong>carte 2D classique</strong> reste utile pour situer géographiquement un itinéraire, mais peine à faire comprendre la <strong>structure relationnelle</strong> du réseau : densité de correspondances, connexions entre modes (métro, RER, bus, tram), ou exploration « globale » d’une zone.</p>
+<p>La <strong>visualisation immersive</strong> (3D et VR) offre une autre lecture : l’utilisateur peut parcourir le graphe dans un espace tridimensionnel, observer les relations entre nœuds et arêtes, et bénéficier d’une expérience plus engageante lors d’une démonstration.</p>
+<p>Parallèlement, l’<strong>IA conversationnelle</strong> et les architectures <strong>agentiques</strong> permettent de formuler des demandes en langage naturel (« comment aller de A à B ? », « quels restaurants autour de cette station ? ») plutôt que de manipuler des menus techniques. Le couplage voix + agent + visualisation répond ainsi au cahier des charges : une <strong>exploration intuitive</strong> d’un système complexe, avec des <strong>données distribuées</strong> (GTFS local, API IDFM/Navitia, recherche web) et un <strong>prototype fonctionnel démontrable</strong>.</p>
+<h2 id="12-probl%C3%A9matique">1.2 Problématique</h2>
+<p><strong>Comment permettre à un utilisateur d’explorer un réseau de transport complexe en combinant visualisation immersive, commandes vocales et agent IA ?</strong></p>
+<p>Cette question oriente l’ensemble du projet : il ne s’agit pas seulement d’afficher une carte ou de calculer un chemin, mais de <strong>relier</strong> compréhension langagière, traitement sur graphe et restitution visuelle (2D et 3D/VR) dans un prototype cohérent et démontrable.</p>
+<h2 id="13-objectifs-du-projet">1.3 Objectifs du projet</h2>
+<p>Les objectifs retenus, alignés sur le sujet officiel P26, sont les suivants :</p>
+<ol>
+<li><strong>Modéliser</strong> un réseau de transport sous forme de graphe exploitable (données GTFS → graphe NetworkX).</li>
+<li><strong>Permettre l’exploration</strong> via une interface 2D (carte Mapbox) et une visualisation 3D/VR (GraphXR).</li>
+<li><strong>Intégrer un agent IA conversationnel</strong> capable d’interpréter des commandes naturelles et de déclencher des actions codées.</li>
+<li><strong>Utiliser la voix</strong> comme mode principal d’interaction (mode texte conservé pour les tests).</li>
+<li><strong>Intégrer des enrichissements secondaires</strong> via API/web (IDFM/Navitia, recherche de lieux en ligne), illustrant l’usage de données distribuées.</li>
+<li><strong>Produire un prototype fonctionnel</strong> démontrable devant un jury académique, avec des scénarios concrets de mobilité.</li>
+</ol>
+<h2 id="14-p%C3%A9rim%C3%A8tre-du-prototype">1.4 Périmètre du prototype</h2>
+<p>Le périmètre est volontairement limité :</p>
+<ul>
+<li>Il s’agit d’un <strong>prototype de démonstration</strong>, pas d’un produit final ni d’un service opérationnel.</li>
+<li>Le système <strong>n’est pas</strong> un équivalent complet de Google Maps, Citymapper ou d’une application de mobilité industrialisée.</li>
+<li>Le <strong>routage</strong> est basé sur un chemin dans le graphe, principalement selon le <strong>nombre de sauts</strong>, puis enrichi par un résumé distance/temps ; il ne garantit pas un optimum temps réel multi-modal.</li>
+<li><strong>GraphXR</strong> est intégré comme <strong>module de visualisation 3D/VR</strong> ; il n’a pas été développé entièrement à partir de zéro dans ce PE.</li>
+<li>Les <strong>API externes</strong> (IDFM, Navitia, recherche web) sont des <strong>enrichissements secondaires</strong>, pas le cœur du moteur transport.</li>
+<li><strong>Aucun objectif d’industrialisation</strong> n’est visé : déploiement, scalabilité, sécurité production et maintenance long terme ne font pas partie des livrables.</li>
+</ul>
+<h2 id="15-organisation-du-rapport">1.5 Organisation du rapport</h2>
+<p>Ce rapport alterne entre une <strong>démarche projet</strong> (contexte, besoins, contraintes, chronologie, bilan) et une <strong>partie technique</strong> (architecture, données, agent IA, backend, interface, tests, limites). J’ai volontairement renvoyé les détails les plus fins aux annexes (pipeline GTFS, endpoints, outils de l’agent, logs, configuration VR), afin de garder le corps du texte lisible sans blocs de code volumineux.</p>
+<hr>
+<h1 id="2-d%C3%A9marche-men%C3%A9e-et-analyse-du-besoin">2. Démarche menée et analyse du besoin</h1>
+<h2 id="21-compr%C3%A9hension-du-contexte">2.1 Compréhension du contexte</h2>
+<p>Le sujet officiel <strong>P26</strong> porte sur le <strong>couplage</strong> entre :</p>
+<ul>
+<li>une <strong>visualisation immersive</strong> (3D/VR) ;</li>
+<li>une <strong>architecture agentique IA</strong> ;</li>
+<li>une interaction <strong>voice-to-command</strong> ;</li>
+<li>l’<strong>exploration d’un graphe complexe</strong> de réseau de transport.</li>
+</ul>
+<p>Le projet s’inscrit dans le cadre du <strong>Projet Étudiant CSPE</strong> à l’UTT, avec un volume estimé de <strong>150 heures</strong> et <strong>6 ECTS</strong>. Le livrable attendu combine un <strong>prototype fonctionnel</strong>, un <strong>rapport écrit</strong> (30 à 40 pages) et une <strong>présentation orale avec démonstration</strong>.</p>
+<p>La problématique centrale impose de ne pas traiter séparément l’IA, la visualisation et les données transport, mais de montrer leur <strong>complémentarité</strong> dans un scénario utilisateur cohérent.</p>
+<h2 id="22-public-cible-et-cas-dusage">2.2 Public cible et cas d’usage</h2>
+<p>Le <strong>public principal</strong> est <strong>académique</strong> : jury de soutenance, encadrants, laboratoire. Les scénarios d’usage sont volontairement liés à la <strong>mobilité réelle</strong> (stations, itinéraires, POI autour d’une station) afin de rendre la démonstration <strong>compréhensible</strong> et concrète, même si le prototype n’est pas destiné au grand public.</p>
+<p>Les scénarios suivants structurent le prototype :</p>
+<table>
+<thead>
+<tr>
+<th>Scénario</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Itinéraire</strong></td>
+<td>L’utilisateur demande un trajet entre deux stations ou lieux ; le système calcule un chemin sur le graphe et l’affiche.</td>
+</tr>
+<tr>
+<td><strong>Recherche de station</strong></td>
+<td>L’utilisateur cherche une station par nom ; le système propose des correspondances et peut centrer la carte.</td>
+</tr>
+<tr>
+<td><strong>POI autour d’une station</strong></td>
+<td>L’utilisateur explore des points d’intérêt (restaurants, commerces, etc.) dans un rayon autour d’une station.</td>
+</tr>
+<tr>
+<td><strong>Informations dynamiques</strong></td>
+<td>L’utilisateur demande des informations complémentaires (ex. prochains départs, horaires) via enrichissement IDFM si configuré.</td>
+</tr>
+<tr>
+<td><strong>Carte 2D</strong></td>
+<td>Les résultats sont visualisés sur une carte Mapbox intégrée à l’interface React.</td>
+</tr>
+<tr>
+<td><strong>GraphXR 3D/VR</strong></td>
+<td>L’utilisateur ouvre ou synchronise une vue 3D/VR du graphe de transport.</td>
+</tr>
+<tr>
+<td><strong>Interaction vocale</strong></td>
+<td>L’utilisateur s’adresse à l’agent par la voix (ou en texte pour test) ; l’agent interprète, exécute un outil, répond naturellement.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="23-besoins-fonctionnels">2.3 Besoins fonctionnels</h2>
+<h3 id="231-besoins-critiques">2.3.1 Besoins critiques</h3>
+<table>
+<thead>
+<tr>
+<th>Besoin</th>
+<th>Justification</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Charger et exploiter les données de transport</td>
+<td>Base du moteur métier</td>
+</tr>
+<tr>
+<td>Générer un graphe exploitable</td>
+<td>Routage, recherche, exploration</td>
+</tr>
+<tr>
+<td>Rechercher stations / POI</td>
+<td>Scénarios utilisateur fréquents</td>
+</tr>
+<tr>
+<td>Calculer un itinéraire</td>
+<td>Scénario central de mobilité</td>
+</tr>
+<tr>
+<td>Piloter par commandes naturelles</td>
+<td>Objectif voice-to-command</td>
+</tr>
+<tr>
+<td>Afficher les résultats sur l’interface</td>
+<td>Restitution visible pour la démo</td>
+</tr>
+</tbody>
+</table>
+<h3 id="232-besoins-importants">2.3.2 Besoins importants</h3>
+<table>
+<thead>
+<tr>
+<th>Besoin</th>
+<th>Justification</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Visualisation 2D (Mapbox)</td>
+<td>Lecture géographique rapide</td>
+</tr>
+<tr>
+<td>Intégration GraphXR 3D/VR</td>
+<td>Visualisation immersive du graphe</td>
+</tr>
+<tr>
+<td>Enrichissement via API/web</td>
+<td>Informations dynamiques ou complémentaires</td>
+</tr>
+<tr>
+<td>Mode texte pour test</td>
+<td>Validation des intentions sans dépendre de la voix</td>
+</tr>
+<tr>
+<td>Logs et scénarios de validation</td>
+<td>Traçabilité et débogage</td>
+</tr>
+</tbody>
+</table>
+<h3 id="233-besoins-souhaitables">2.3.3 Besoins souhaitables</h3>
+<table>
+<thead>
+<tr>
+<th>Besoin</th>
+<th>Justification</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Meilleure activation vocale</td>
+<td>Mot d’activation, fenêtre d’écoute, confirmation</td>
+</tr>
+<tr>
+<td>Déploiement VR plus propre</td>
+<td>Réduire la dépendance à ngrok</td>
+</tr>
+<tr>
+<td>Robustesse de synchronisation</td>
+<td>Carte / GraphXR toujours alignés avec l’agent</td>
+</tr>
+<tr>
+<td>Optimisation de latence</td>
+<td>Chaîne voix → IA → backend → UI</td>
+</tr>
+</tbody>
+</table>
+<h2 id="24-contraintes-du-projet">2.4 Contraintes du projet</h2>
+<h3 id="241-contraintes-p%C3%A9dagogiques">2.4.1 Contraintes pédagogiques</h3>
+<table>
+<thead>
+<tr>
+<th>Contrainte</th>
+<th>Impact</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Projet réalisé <strong>seul</strong></td>
+<td>Vision globale mais charge importante</td>
+</tr>
+<tr>
+<td><strong>Temps limité</strong> (150 h)</td>
+<td>Priorisation des fonctionnalités démontrables</td>
+</tr>
+<tr>
+<td>Livrables multiples</td>
+<td>Prototype + rapport + soutenance</td>
+</tr>
+<tr>
+<td>Prototype, pas produit</td>
+<td>Pas d’industrialisation</td>
+</tr>
+</tbody>
+</table>
+<h3 id="242-contraintes-techniques">2.4.2 Contraintes techniques</h3>
+<table>
+<thead>
+<tr>
+<th>Contrainte</th>
+<th>Impact</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Données parfois <strong>incomplètes</strong></td>
+<td>Graphe et correspondances imparfaits</td>
+</tr>
+<tr>
+<td><strong>Coût de calcul</strong> du graphe</td>
+<td>Nécessité d’un bundle pré-calculé</td>
+</tr>
+<tr>
+<td><strong>Latence</strong> IA / voix</td>
+<td>Expérience utilisateur parfois lente</td>
+</tr>
+<tr>
+<td><strong>Synchronisation UI</strong></td>
+<td>Réponse de l’agent correcte mais carte/GraphXR non mis à jour dans certains cas</td>
+</tr>
+<tr>
+<td><strong>WebXR / Quest</strong> nécessite <strong>HTTPS</strong></td>
+<td>Configuration proxy/ngrok en démo</td>
+</tr>
+<tr>
+<td>Multi-processus local</td>
+<td>Agent IA (:5055), backend (:8787), frontend (:5173), GraphXR (:3000)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="243-contraintes-organisationnelles">2.4.3 Contraintes organisationnelles</h3>
+<table>
+<thead>
+<tr>
+<th>Contrainte</th>
+<th>Impact</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Travail <strong>solo</strong></td>
+<td>Intégration et tests croisés plus lents</td>
+</tr>
+<tr>
+<td>Nombreux modules à développer</td>
+<td>Nécessité de prioriser les scénarios démontrables</td>
+</tr>
+<tr>
+<td>Documentation en fin de projet</td>
+<td>Risque de perte de détail sur certains choix</td>
+</tr>
+</tbody>
+</table>
+<h2 id="25-%C3%A9tat-de-lart-et-positionnement">2.5 État de l’art et positionnement</h2>
+<p>Cette section ne prétend pas à une revue de littérature exhaustive. Elle situe le projet par rapport à des approches connues, en expliquant pourquoi chaque notion est utile dans le prototype P26.</p>
+<h3 id="251-graphes-de-transport-et-gtfs">2.5.1 Graphes de transport et GTFS</h3>
+<p>Un réseau de transport se représente naturellement sous forme de <strong>graphe</strong> :</p>
+<ul>
+<li>les <strong>stations</strong> et <strong>arrêts</strong> correspondent aux <strong>nœuds</strong> ;</li>
+<li>les <strong>trajets</strong>, <strong>lignes</strong> et <strong>correspondances</strong> correspondent aux <strong>arêtes</strong> ;</li>
+<li>les <strong>métadonnées</strong> (horaires, modes, distances, transferts, POI, informations dynamiques) enrichissent la lecture du réseau.</li>
+</ul>
+<p>Le format <strong>GTFS</strong> (General Transit Feed Specification) fournit une base structurée pour reconstruire ce graphe à partir de fichiers standard (<code>stops</code>, <code>routes</code>, <code>trips</code>, <code>stop_times</code>, <code>transfers</code>, etc.). De nombreux outils académiques et industriels s’appuient sur ce format pour le routage, l’analyse de réseau ou la visualisation.</p>
+<p>Dans ce projet, le graphe n’est pas seulement une structure de données interne. Il sert de <strong>base commune</strong> au calcul d’itinéraires, à la recherche de stations, à l’exploration de zones et à la visualisation 3D. <strong>NetworkX</strong> (Python) permet de manipuler ce graphe et d’appliquer des algorithmes de plus court chemin.</p>
+<p>Le GTFS apporte toutefois surtout la <strong>matière première</strong> : horaires, topologie, correspondances. À lui seul, il ne produit pas une expérience utilisateur complète. Il manque une couche d’<strong>exploration</strong>, de <strong>visualisation</strong> et d’<strong>interaction</strong> — notamment vocale — pour répondre au cahier des charges. Le prototype ajoute précisément cette couche au-dessus du graphe reconstruit localement, complété par des enrichissements via API (IDFM, recherche web) lorsque nécessaire.</p>
+<h3 id="252-visualisation-2d-3d-et-vr">2.5.2 Visualisation 2D, 3D et VR</h3>
+<p>Les applications de mobilité grand public privilégient la <strong>cartographie 2D</strong>. Dans ce projet, la carte Mapbox remplit un rôle important : elle permet de se repérer géographiquement, d’afficher un itinéraire, des stations ou des POI de manière familière pour le jury.</p>
+<p>Cependant, une interface 2D devient <strong>limitée</strong> lorsqu’on veut analyser la <strong>structure relationnelle</strong> d’un réseau complexe :</p>
+<ul>
+<li>la 2D montre bien <strong>où</strong> se trouvent les stations ;</li>
+<li>elle montre moins bien <strong>comment</strong> elles sont reliées : densité de correspondances, connexions entre modes (métro, RER, bus, tram), structure globale du graphe.</li>
+</ul>
+<p>La <strong>visualisation 3D</strong> et la <strong>réalité virtuelle</strong> offrent une lecture plus <strong>globale</strong> et plus <strong>exploratoire</strong> : parcourir le graphe dans un espace tridimensionnel, observer les relations entre nœuds et arêtes, rendre la démonstration plus engageante devant un public académique.</p>
+<p>La 2D et la 3D/VR restent <strong>complémentaires</strong> dans le prototype : la première sert à la lecture géographique rapide, la seconde à l’exploration immersive du réseau. En revanche, la VR impose des <strong>contraintes importantes</strong> : performances, ergonomie, nécessité d’<strong>HTTPS</strong> pour WebXR (notamment sur Meta Quest), configuration plus lourde qu’une simple page web locale. Ces limites expliquent pourquoi le mode VR est validé en <strong>démonstration</strong>, sans viser un déploiement industrialisé.</p>
+<h3 id="253-agents-ia-et-tool-calling">2.5.3 Agents IA et tool-calling</h3>
+<p>Les modèles de langage récents (OpenAI et autres) peuvent interpréter des demandes en langage naturel. Un <strong>chatbot libre</strong>, laissé piloter l’application sans cadre, serait difficile à contrôler : risque d’actions imprévisibles, réponses déconnectées du moteur transport, faible traçabilité des opérations réellement exécutées.</p>
+<p>Le <strong>tool-calling</strong> répond à cette limite : l’agent ne déclenche que des <strong>outils définis dans le code</strong> (<code>cspe_*</code> dans ce prototype). Il devient un <strong>orchestrateur</strong> :</p>
+<ol>
+<li>il <strong>comprend</strong> la demande utilisateur (voix ou texte) ;</li>
+<li>il <strong>choisit</strong> l’outil adapté ;</li>
+<li>le backend <strong>exécute</strong> l’action (routage, recherche, affichage carte, sync GraphXR) ;</li>
+<li>l’agent <strong>restitue</strong> le résultat en langage naturel.</li>
+</ol>
+<p>L’intérêt du tool-calling est de garder une <strong>séparation claire</strong> entre la compréhension de la demande, assurée par l’agent IA, et l’exécution réelle, assurée par les modules codés du prototype. <strong>L’agent ne remplace pas les modules métier. Il sert d’intermédiaire intelligent entre la demande utilisateur et les modules spécialisés du prototype.</strong></p>
+<p>Des expérimentations avec des modèles <strong>locaux</strong> (Ollama, etc.) permettent de tester une orchestration sans cloud, avec des compromis sur la fiabilité et la latence. Pour la démonstration finale, OpenAI a été retenu pour une meilleure stabilité de la chaîne intention → outil → réponse.</p>
+<h3 id="254-positionnement-du-prototype">2.5.4 Positionnement du prototype</h3>
+<p>Le prototype se situe à l’intersection de <strong>trois axes</strong> directement liés au sujet P26 :</p>
+<table>
+<thead>
+<tr>
+<th>Axe</th>
+<th>Rôle dans le prototype</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Graphe de transport</strong></td>
+<td>Modélisation GTFS → NetworkX, routage, recherche, exploration</td>
+</tr>
+<tr>
+<td><strong>Visualisation 2D / 3D / VR</strong></td>
+<td>Carte Mapbox + GraphXR pour deux lectures complémentaires du réseau</td>
+</tr>
+<tr>
+<td><strong>Agent IA / voice-to-command</strong></td>
+<td>Orchestration par outils, interaction vocale prioritaire</td>
+</tr>
+</tbody>
+</table>
+<p>Le projet ne vise <strong>pas</strong> à créer une application de navigation grand public (type Google Maps ou Citymapper). Il vise à <strong>démontrer le couplage</strong> entre :</p>
+<ul>
+<li>des <strong>données distribuées</strong> (GTFS local, API IDFM/Navitia, recherche web) ;</li>
+<li>un <strong>graphe de transport</strong> exploitable ;</li>
+<li>un <strong>agent IA contrôlé par outils</strong> ;</li>
+<li>une <strong>visualisation immersive</strong> (2D + 3D/VR) ;</li>
+<li>une <strong>interaction vocale</strong> comme mode principal visé.</li>
+</ul>
+<p>Dans cette logique, chaque brique apporte une réponse partielle au cahier des charges ; c’est leur <strong>assemblage</strong> — via le backend FastAPI et les scénarios de démonstration — qui constitue l’apport principal du Projet Étudiant.</p>
+<hr>
+<h1 id="3-conception-et-architecture-du-prototype">3. Conception et architecture du prototype</h1>
+<p>L’architecture du prototype repose sur <strong>trois blocs principaux</strong> : l’agent IA conversationnel, le moteur transport basé sur un graphe GTFS, et les interfaces de visualisation 2D/3D/VR. Ces blocs communiquent à travers un <strong>backend FastAPI</strong>, qui joue le rôle de <strong>couche d’intégration</strong> entre les requêtes utilisateur, les traitements transport et la synchronisation de l’interface.</p>
+<h2 id="31-architecture-g%C3%A9n%C3%A9rale">3.1 Architecture générale</h2>
+<h3 id="311-bloc-agent-ia">3.1.1 Bloc agent IA</h3>
+<p>Dans ce prototype, l’agent IA conversationnel a été nommé <strong>ATLAS</strong>. Ce nom désigne la couche d’orchestration chargée d’interpréter les commandes utilisateur et de déclencher les outils adaptés. Il :</p>
+<ol>
+<li>reçoit une entrée utilisateur (voix ou texte) ;</li>
+<li><strong>comprend</strong> la demande (intention) ;</li>
+<li><strong>sélectionne un outil codé</strong> dans le catalogue <code>cspe_*</code> ;</li>
+<li>déclenche l’exécution via le backend ;</li>
+<li><strong>génère une réponse naturelle</strong> après réception des résultats techniques.</li>
+</ol>
+<p>OpenAI ne pilote pas directement l’application de manière libre. Il interprète la demande utilisateur, identifie l’intention et sélectionne des outils définis dans le code. Ces outils sont ensuite exécutés par le backend FastAPI pour interagir avec le graphe de transport, la carte 2D ou GraphXR.</p>
+<p>L’agent tourne comme <strong>service Flask séparé</strong> (port <strong>5055</strong> par défaut), communiquant avec le backend et le frontend via HTTP.</p>
+<h3 id="312-bloc-transport-et-donn%C3%A9es">3.1.2 Bloc transport et données</h3>
+<p>Ce bloc constitue le <strong>moteur métier transport</strong> :</p>
+<table>
+<thead>
+<tr>
+<th>Fonction</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Transformation GTFS → graphe</td>
+<td>Lecture des CSV GTFS, construction d’arêtes ride/transfer</td>
+</tr>
+<tr>
+<td>Recherche stations / arrêts</td>
+<td>Résolution de noms, recherche floue</td>
+</tr>
+<tr>
+<td>Calcul d’itinéraires</td>
+<td>Plus court chemin sur le graphe (critère principal : sauts)</td>
+</tr>
+<tr>
+<td>Exploration de zones</td>
+<td>Arrêts et POI dans un rayon</td>
+</tr>
+<tr>
+<td>POI</td>
+<td>Index OSM ou dérivés locaux</td>
+</tr>
+<tr>
+<td>Enrichissements secondaires</td>
+<td>IDFM/Navitia PRIM, recherche web</td>
+</tr>
+</tbody>
+</table>
+<p>Le graphe est chargé depuis un <strong>bundle pré-calculé</strong> (<code>graph_bundle.pkl</code>) pour éviter de reconstruire le réseau à chaque démarrage.</p>
+<h3 id="313-bloc-visualisation">3.1.3 Bloc visualisation</h3>
+<table>
+<thead>
+<tr>
+<th>Composant</th>
+<th>Rôle</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Interface React/Vite</strong></td>
+<td>Shell utilisateur, modes d’affichage, rail agent IA</td>
+</tr>
+<tr>
+<td><strong>Carte 2D Mapbox</strong></td>
+<td>Visualisation géographique, itinéraires, stations, POI</td>
+</tr>
+<tr>
+<td><strong>GraphXR 3D/VR</strong></td>
+<td>Visualisation immersive du graphe (Next.js, Babylon.js, WebXR)</td>
+</tr>
+<tr>
+<td><strong>Synchronisation</strong></td>
+<td>File de commandes UI (<code>/api/shell/*</code>), sync GraphXR (~900 ms)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="314-backend-fastapi-comme-couche-dint%C3%A9gration">3.1.4 Backend FastAPI comme couche d’intégration</h3>
+<p>Le <strong>backend FastAPI</strong> (port <strong>8787</strong>) centralise :</p>
+<ul>
+<li>les endpoints <strong>transport</strong> (<code>/api/transport/*</code>) ;</li>
+<li>les endpoints <strong>agent</strong> (<code>/api/agent/*</code>) ;</li>
+<li>le <strong>chat</strong> texte (<code>/api/chat</code>) ;</li>
+<li>la <strong>file de commandes shell</strong> pour le frontend (<code>/api/shell/*</code>) ;</li>
+<li>la <strong>gestion des sessions GraphXR</strong> (<code>/api/transport/graph3d/*</code>).</li>
+</ul>
+<p>Le frontend et l’agent IA <strong>ne lisent pas directement</strong> les fichiers GTFS : ils consomment les API du backend, qui charge le graphe côté serveur.</p>
+<p>Le backend expose plusieurs endpoints permettant de relier l’agent IA, le moteur transport et l’interface utilisateur :</p>
+<p><strong>Transport</strong></p>
+<table>
+<thead>
+<tr>
+<th>Méthode</th>
+<th>Endpoint</th>
+<th>Rôle</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/api/transport/bundle-health</code></td>
+<td>Santé du bundle graphe</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/transport/stops/search</code></td>
+<td>Recherche stations</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/transport/route</code></td>
+<td>Calcul itinéraire</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/transport/stops/nearby</code></td>
+<td>Arrêts proches</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/transport/pois/nearby</code></td>
+<td>POI proches</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/transport/area/explore</code></td>
+<td>Exploration zone</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/transport/area/filter</code></td>
+<td>Filtrage</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/transport/map</code></td>
+<td>Carte Mapbox HTML</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/transport/map/exploration-overlay</code></td>
+<td>Overlay exploration</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/transport/map/route-overlay</code></td>
+<td>Overlay itinéraire</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/transport/graph3d/session</code></td>
+<td>Création session 3D</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/transport/graph3d/session/{id}</code></td>
+<td>Lecture session</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/transport/graph3d/sync</code></td>
+<td>Push sync GraphXR</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/transport/graph3d/sync/{client_id}</code></td>
+<td>Poll sync GraphXR</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/transport/stats</code></td>
+<td>Statistiques</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Agent, chat, shell</strong></p>
+<table>
+<thead>
+<tr>
+<th>Méthode</th>
+<th>Endpoint</th>
+<th>Rôle</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>POST</td>
+<td><code>/api/chat</code></td>
+<td>Chat texte</td>
+</tr>
+<tr>
+<td>GET/POST</td>
+<td><code>/api/agent/context</code>, <code>/api/agent/events</code></td>
+<td>Contexte et événements agent</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/agent/transport/route</code></td>
+<td>Route via couche agent</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/agent/transport/place-lookup</code></td>
+<td>Recherche lieu enrichie</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/shell/enqueue</code></td>
+<td>Enqueue commande UI</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/shell/poll</code></td>
+<td>Poll commandes frontend</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/shell/stats</code></td>
+<td>Statistiques file</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/atlas/input-mode</code></td>
+<td>Mode entrée agent</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/health</code></td>
+<td>Santé API</td>
+</tr>
+</tbody>
+</table>
+<p>Le backend assure aussi la génération des cartes Mapbox côté serveur et le maintien de la file de commandes consommée par le frontend pour synchroniser l’interface.</p>
+<h4 id="tableau-3--processus-et-ports-configuration-locale-par-d%C3%A9faut">Tableau 3 — Processus et ports (configuration locale par défaut)</h4>
+<table>
+<thead>
+<tr>
+<th>Processus</th>
+<th>Technologie</th>
+<th>Port</th>
+<th>Rôle</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Frontend</td>
+<td>React + Vite</td>
+<td>5173</td>
+<td>Interface utilisateur</td>
+</tr>
+<tr>
+<td>Backend</td>
+<td>FastAPI (uvicorn)</td>
+<td>8787</td>
+<td>Couche d’intégration / API</td>
+</tr>
+<tr>
+<td>Agent IA (ATLAS)</td>
+<td>Flask</td>
+<td>5055</td>
+<td>Orchestration IA</td>
+</tr>
+<tr>
+<td>GraphXR</td>
+<td>Next.js</td>
+<td>3000</td>
+<td>Viewer 3D/VR</td>
+</tr>
+<tr>
+<td>Proxy VR (option Quest)</td>
+<td>Node.js (<code>proxy-vr.js</code>)</td>
+<td>8080</td>
+<td>HTTPS unifié + ngrok</td>
+</tr>
+</tbody>
+</table>
+<h3 id="315-diagramme-darchitecture-globale">3.1.5 Diagramme d’architecture globale</h3>
+<pre><code class="language-mermaid"><div class="mermaid">flowchart TB
+  subgraph User["Utilisateur"]
+    Voice["Voix / texte"]
+    Browser["Navigateur / Meta Quest"]
+  end
+
+  subgraph Viz["Bloc Visualisation"]
+    React["React/Vite :5173"]
+    Map2D["Carte 2D Mapbox"]
+    GraphXR["GraphXR 3D/VR :3000"]
+  end
+
+  subgraph Backend["Backend FastAPI :8787"]
+    TransportAPI["/api/transport/*"]
+    ShellAPI["/api/shell/*"]
+    AgentAPI["/api/agent/*"]
+    ChatAPI["/api/chat"]
+  end
+
+  subgraph Agent["Bloc agent IA :5055"]
+    Planner["Planner / Intent Router"]
+    Tools["Catalogue cspe_*"]
+  end
+
+  subgraph Data["Bloc Transport / Données"]
+    Bundle["graph_bundle.pkl"]
+    GTFS["Fichiers GTFS"]
+    POI["POI / OSM"]
+    IDFM["IDFM / Navitia"]
+  end
+
+  Voice --> Agent
+  Browser --> React
+  React --> Backend
+  Agent --> Tools
+  Tools --> Backend
+  Backend --> Bundle
+  GTFS --> Bundle
+  Backend --> Map2D
+  Backend --> GraphXR
+  Backend --> IDFM
+  Backend --> POI
+  Agent --> Browser
+</div></code></pre>
+<p>[DIAGRAMME À INSÉRER : architecture globale IA / Transport / Visualisation / Backend FastAPI]</p>
+<h3 id="316-s%C3%A9quence-dune-commande-utilisateur">3.1.6 Séquence d’une commande utilisateur</h3>
+<p>Flux typique :</p>
+<ol>
+<li>L’utilisateur émet une <strong>commande vocale ou texte</strong> (« calcule un itinéraire de Châtelet à Nation »).</li>
+<li>L’<strong>agent IA</strong> reçoit l’entrée, détecte l’<strong>intention</strong> (ex. calcul d’itinéraire).</li>
+<li>L’agent sélectionne l’outil <strong><code>cspe_compute_route</code></strong> (ou équivalent).</li>
+<li>L’outil appelle le <strong>backend FastAPI</strong> (<code>/api/transport/route</code>, <code>/api/agent/transport/route</code>).</li>
+<li>Le moteur transport calcule le chemin sur le <strong>graphe NetworkX</strong>.</li>
+<li>Le backend renvoie le résultat JSON et enqueue des <strong>commandes shell</strong> pour le frontend (affichage carte, mise à jour état).</li>
+<li>Le frontend <strong>poll</strong> <code>/api/shell/poll</code> et applique les commandes (carte 2D, optionnellement GraphXR).</li>
+<li>L’agent produit une <strong>réponse naturelle</strong> (« Votre itinéraire compte X correspondances… »).</li>
+</ol>
+<pre><code class="language-mermaid"><div class="mermaid">sequenceDiagram
+  participant U as Utilisateur
+  participant A as Agent IA
+  participant B as Backend FastAPI
+  participant G as Graphe transport
+  participant F as Frontend React
+  participant V as GraphXR / Carte
+
+  U->>A: Commande voix/texte
+  A->>A: Détection intention
+  A->>B: Appel outil cspe_*
+  B->>G: Routage / recherche / POI
+  G-->>B: Résultat technique
+  B->>B: Enqueue commandes shell
+  B-->>A: Résultat outil
+  F->>B: GET /api/shell/poll
+  B-->>F: Commandes UI
+  F->>V: Mise à jour carte / 3D
+  A-->>U: Réponse naturelle
+</div></code></pre>
+<p>[DIAGRAMME À INSÉRER : séquence d’une commande vocale]</p>
+<h2 id="32-donn%C3%A9es-et-graphe-de-transport">3.2 Données et graphe de transport</h2>
+<h3 id="321-donn%C3%A9es-gtfs">3.2.1 Données GTFS</h3>
+<p>Le prototype s’appuie sur des données <strong>GTFS</strong> stockées localement. Il s’agit de données correspondant au réseau de transport <strong>Île-de-France</strong>.</p>
+<p>[À COMPLÉTER : version/date exacte des données GTFS utilisées, source de téléchargement IDFM/OpenData]</p>
+<h4 id="tableau-4--fichiers-gtfs-utilis%C3%A9s">Tableau 4 — Fichiers GTFS utilisés</h4>
+<table>
+<thead>
+<tr>
+<th>Fichier</th>
+<th>Rôle</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>stops.txt</code></td>
+<td>Arrêts et stations</td>
+</tr>
+<tr>
+<td><code>routes.txt</code></td>
+<td>Lignes / modes</td>
+</tr>
+<tr>
+<td><code>trips.txt</code></td>
+<td>Trajets</td>
+</tr>
+<tr>
+<td><code>stop_times.txt</code></td>
+<td>Séquences d’arrêts par trajet</td>
+</tr>
+<tr>
+<td><code>transfers.txt</code></td>
+<td>Correspondances explicites</td>
+</tr>
+</tbody>
+</table>
+<p>Des fichiers complémentaires peuvent être présents selon le jeu de données. Des POI issus d’<strong>OpenStreetMap</strong> ou de fichiers dérivés peuvent enrichir l’exploration locale.</p>
+<h3 id="322-transformation-en-graphe">3.2.2 Transformation en graphe</h3>
+<p>La transformation GTFS en graphe repose sur un module de chargement dédié et un script de rebuild du bundle.</p>
+<p><strong>Principes retenus :</strong></p>
+<ol>
+<li>Chaque <strong>arrêt GTFS</strong> (<code>stop_id</code>) devient un <strong>nœud</strong> du graphe.</li>
+<li>Les <strong>trajets</strong> (<code>trips</code> + <code>stop_times</code>) génèrent des arêtes <strong>ride</strong> entre arrêts consécutifs.</li>
+<li>Les <strong>transfers</strong> GTFS et des <strong>transfers inférés</strong> (même nom, proximité géographique) ajoutent des arêtes <strong>transfer</strong>.</li>
+<li>Les arêtes portent des métadonnées : mode, distance estimée, pénalité de correspondance, etc.</li>
+<li>Le résultat est sérialisé dans un <strong>bundle pré-calculé</strong> (<code>graph_bundle.pkl</code>, version de cache <strong>5</strong>).</li>
+</ol>
+<p><strong>NetworkX</strong> est utilisé pour stocker le graphe et appliquer <code>shortest_path</code>. Un <strong>bundle pré-calculé</strong> évite de relancer une construction coûteuse à chaque démarrage.</p>
+<pre><code class="language-mermaid"><div class="mermaid">flowchart LR
+  GTFS["Fichiers GTFS"]
+  Loader["Chargement GTFS"]
+  Edges["Arêtes ride + transfer"]
+  NX["Graphe NetworkX"]
+  Bundle["graph_bundle.pkl"]
+  API["Backend FastAPI"]
+  GTFS --> Loader
+  Loader --> Edges
+  Edges --> NX
+  NX --> Bundle
+  Bundle --> API
+</div></code></pre>
+<p>[DIAGRAMME À INSÉRER : pipeline données GTFS vers graphe transport]</p>
+<h3 id="323-moteur-transport">3.2.3 Moteur transport</h3>
+<table>
+<thead>
+<tr>
+<th>Fonction</th>
+<th>Endpoint</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Recherche de station</td>
+<td><code>GET /api/transport/stops/search</code></td>
+</tr>
+<tr>
+<td>Itinéraire</td>
+<td><code>POST /api/transport/route</code></td>
+</tr>
+<tr>
+<td>Arrêts à proximité</td>
+<td><code>GET /api/transport/stops/nearby</code></td>
+</tr>
+<tr>
+<td>POI à proximité</td>
+<td><code>GET /api/transport/pois/nearby</code></td>
+</tr>
+<tr>
+<td>Exploration de zone</td>
+<td><code>POST /api/transport/area/explore</code></td>
+</tr>
+<tr>
+<td>Filtrage visible</td>
+<td><code>POST /api/transport/area/filter</code></td>
+</tr>
+<tr>
+<td>Carte HTML Mapbox</td>
+<td><code>POST /api/transport/map</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="324-routage-et-limites">3.2.4 Routage et limites</h3>
+<p>Le routage repose sur <strong>NetworkX</strong>, qui permet de représenter le réseau sous forme de graphe et de calculer des chemins entre stations. Le calcul d’itinéraire utilise un <strong>chemin dans le graphe</strong>, avec un critère principal basé sur le <strong>nombre de sauts</strong> (<code>nx.shortest_path</code> sans pondération temps réelle systématique). Après calcul, le système produit un <strong>résumé</strong> incluant distance et temps estimés à partir des métadonnées d’arêtes et vitesses par mode.</p>
+<p><strong>Formulation honnête :</strong> ce n’est <strong>pas</strong> un moteur de routage temps réel optimisé multi-modal ; c’est un chemin structurel sur le graphe GTFS construit, adapté à un prototype d’exploration et de démonstration.</p>
+<p><strong>Limites des données :</strong></p>
+<ul>
+<li>Jeu GTFS parfois <strong>incomplet</strong> ou incohérent sur certaines correspondances.</li>
+<li>Métadonnées de <strong>transfert</strong> pas toujours fiables → nécessité d’<strong>inférer</strong> des correspondances.</li>
+<li><strong>Données statiques</strong> (GTFS) vs <strong>données dynamiques</strong> (prochains départs IDFM) : seules les secondes sont externes et optionnelles.</li>
+<li><strong>Cache/bundle obligatoire</strong> pour un démarrage raisonnable.</li>
+<li>Statistiques exactes du graphe (nombre de nœuds/arêtes) : [À COMPLÉTER : chiffres mesurés sur votre bundle local].</li>
+</ul>
+<h3 id="325-poi-et-enrichissements">3.2.5 POI et enrichissements</h3>
+<p>Les <strong>POI</strong> (points d’intérêt) complètent l’exploration autour des stations. Ils proviennent d’index locaux (OSM ou dérivés) et sont interrogés via les endpoints de proximité et d’exploration de zone.</p>
+<p>Les <strong>enrichissements secondaires</strong> via IDFM/Navitia PRIM et recherche web illustrent l’intégration de <strong>données distribuées</strong> : le cœur du système reste le graphe GTFS local, tandis que les API externes apportent des informations dynamiques ou complémentaires (prochains départs, horaires, recherche de lieux en ligne).</p>
+<h2 id="33-agent-ia-conversationnel">3.3 Agent IA conversationnel</h2>
+<h3 id="331-r%C3%B4le-de-lagent-orchestrateur">3.3.1 Rôle de l’agent orchestrateur</h3>
+<p>L’<strong>agent IA conversationnel</strong> est le module central d’<strong>orchestration</strong>. Il ne contrôle pas librement l’application : il <strong>sélectionne des outils codés</strong> parmi un registre d’outils, exécutés par le backend.</p>
+<p>OpenAI ne pilote pas directement l’application de manière libre. Il interprète la demande utilisateur, identifie l’intention et sélectionne des outils définis dans le code. Ces outils sont ensuite exécutés par le backend FastAPI pour interagir avec le graphe de transport, la carte 2D ou GraphXR.</p>
+<h3 id="332-interaction-vocale-et-mode-texte">3.3.2 Interaction vocale et mode texte</h3>
+<p>Le prototype est conçu <strong>prioritairement</strong> pour une interaction <strong>vocale</strong> avec l’agent (OpenAI Realtime, synthèse vocale Azure Speech côté sortie). C’est le mode principal visé par le cahier des charges (<strong>voice-to-command</strong>).</p>
+<p>Le <strong>mode texte</strong> a été conservé comme interface de <strong>test et de validation</strong>, afin de vérifier plus rapidement les intentions, les outils déclenchés et les réponses de l’agent sans dépendre en permanence de la reconnaissance vocale.</p>
+<h3 id="333-outils-contr%C3%B4l%C3%A9s-par-lagent">3.3.3 Outils contrôlés par l’agent</h3>
+<p>Les outils <strong><code>cspe_*</code></strong> constituent l’<strong>interface de contrôle</strong> entre l’IA et le système. L’agent appelle ces outils pour :</p>
+<ul>
+<li>calculer une route ;</li>
+<li>chercher une station ;</li>
+<li>afficher / mettre à jour une carte ;</li>
+<li>explorer des POI ou une zone ;</li>
+<li>synchroniser GraphXR ;</li>
+<li>consulter le contexte courant ;</li>
+<li>demander des informations dynamiques ou en ligne.</li>
+</ul>
+<h4 id="tableau-5--outils-cspe-catalogue-principal">Tableau 5 — Outils <code>cspe_*</code> (catalogue principal)</h4>
+<table>
+<thead>
+<tr>
+<th>Outil</th>
+<th>Rôle principal</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cspe_search_stops</code></td>
+<td>Recherche de stations/arrêts</td>
+</tr>
+<tr>
+<td><code>cspe_route</code> / <code>cspe_compute_route</code></td>
+<td>Calcul d’itinéraire</td>
+</tr>
+<tr>
+<td><code>cspe_transport_action</code></td>
+<td>Action transport générique</td>
+</tr>
+<tr>
+<td><code>cspe_open_transport_map</code></td>
+<td>Ouverture / focus carte 2D</td>
+</tr>
+<tr>
+<td><code>cspe_set_mode</code></td>
+<td>Changement de mode UI</td>
+</tr>
+<tr>
+<td><code>cspe_navigate</code></td>
+<td>Navigation interface</td>
+</tr>
+<tr>
+<td><code>cspe_transport_graph_mode</code></td>
+<td>Mode graphe transport</td>
+</tr>
+<tr>
+<td><code>cspe_transport_options</code></td>
+<td>Options de transport</td>
+</tr>
+<tr>
+<td><code>cspe_transport_route_view</code></td>
+<td>Affichage vue itinéraire</td>
+</tr>
+<tr>
+<td><code>cspe_apply_structured_outputs</code></td>
+<td>Application de sorties structurées</td>
+</tr>
+<tr>
+<td><code>cspe_open_graph3d</code></td>
+<td>Ouverture GraphXR 3D</td>
+</tr>
+<tr>
+<td><code>cspe_get_current_context</code></td>
+<td>Lecture contexte agent</td>
+</tr>
+<tr>
+<td><code>cspe_update_map</code></td>
+<td>Mise à jour carte</td>
+</tr>
+<tr>
+<td><code>cspe_lookup_place_online</code></td>
+<td>Recherche lieu en ligne</td>
+</tr>
+<tr>
+<td><code>cspe_show_station_or_line_info</code></td>
+<td>Info station/ligne</td>
+</tr>
+<tr>
+<td><code>cspe_nearby_stops</code></td>
+<td>Arrêts à proximité</td>
+</tr>
+<tr>
+<td><code>cspe_nearby_pois</code></td>
+<td>POI à proximité</td>
+</tr>
+<tr>
+<td><code>cspe_explore_area</code></td>
+<td>Exploration de zone</td>
+</tr>
+<tr>
+<td><code>cspe_filter_visible_results</code></td>
+<td>Filtrage résultats visibles</td>
+</tr>
+</tbody>
+</table>
+<p>Les détails d’implémentation du routeur d’intentions vs planner direct OpenAI sont volontairement réduits ici ; ils peuvent être complétés en annexe si nécessaire.</p>
+<h3 id="334-mod%C3%A8les-locaux-choix-dopenai-et-r%C3%A9ponse-naturelle">3.3.4 Modèles locaux, choix d’OpenAI et réponse naturelle</h3>
+<p><strong>OpenAI</strong> est le moteur principal d’orchestration IA retenu pour le prototype. Il assure :</p>
+<ul>
+<li>la <strong>compréhension</strong> des commandes en langage naturel ;</li>
+<li>la <strong>détection d’intention</strong> (directement ou via un routeur d’intentions selon configuration) ;</li>
+<li>la <strong>sélection d’outils</strong> dans le catalogue <code>cspe_*</code> ;</li>
+<li>la <strong>génération de réponse naturelle</strong> après exécution.</li>
+</ul>
+<p>La configuration peut utiliser un <strong>routeur d’intentions</strong> (<code>ATLAS_INTENT_ROUTER</code>) séparant la détection d’intention (JSON structuré) du routage métier vers les outils.</p>
+<p>Une phase d’<strong>expérimentation technique</strong> a porté sur des modèles locaux via <strong>Ollama</strong> (ex. qwen2.5). Cette approche a permis de tester la faisabilité d’un <strong>planner local</strong> et de réduire la dépendance au cloud sur certains scénarios.</p>
+<p>Pour le prototype final de démonstration, <strong>OpenAI a été retenu</strong> pour une meilleure <strong>fiabilité</strong>, <strong>compréhension</strong> des requêtes en français et <strong>stabilité</strong> de la chaîne intent → outil → réponse. L’expérimentation Ollama reste une piste documentée, pas un échec total : elle a informé les choix d’architecture.</p>
+<p>Après exécution d’un outil, l’agent <strong>transforme les résultats techniques</strong> (JSON, statuts, erreurs) en <strong>réponse compréhensible</strong> pour l’utilisateur, éventuellement vocalisée. Cette étape est essentielle pour la démonstration : l’utilisateur ne manipule pas directement les structures de données internes.</p>
+<h2 id="34-visualisation-2d-3d-et-vr">3.4 Visualisation 2D, 3D et VR</h2>
+<h3 id="341-interface-reactvite">3.4.1 Interface React/Vite</h3>
+<p>L’interface <strong>React 19 + Vite</strong> (port <strong>5173</strong>) constitue l’<strong>espace utilisateur principal</strong>. Elle regroupe :</p>
+<ul>
+<li>le <strong>mode transport</strong> (carte, contrôles, résultats) ;</li>
+<li>le <strong>rail agent IA</strong> (interaction, statut) ;</li>
+<li>l’<strong>écoute des commandes shell</strong> pour appliquer les mises à jour UI ;</li>
+<li>la gestion d’état globale (<strong>Zustand</strong>).</li>
+</ul>
+<p>Le script de lancement <code>run_web_app.ps1</code> permet de démarrer l’ensemble de la stack locale.</p>
+<h3 id="342-carte-2d">3.4.2 Carte 2D</h3>
+<p>La carte <strong>2D Mapbox</strong> est une interface complémentaire <strong>importante</strong> :</p>
+<ul>
+<li>lecture <strong>géographique</strong> rapide ;</li>
+<li>affichage des <strong>stations</strong>, <strong>itinéraires</strong>, <strong>POI</strong> ;</li>
+<li>restitution des résultats de l’agent de manière familière pour le jury.</li>
+</ul>
+<p>La carte est générée <strong>côté serveur</strong> (Python / Plotly Mapbox) puis affichée dans le frontend ; le token Mapbox reste côté serveur (<code>MAPBOX_TOKEN</code>).</p>
+<p>[CAPTURE À AJOUTER : interface principale avec carte 2D et rail agent IA]</p>
+<h3 id="343-int%C3%A9gration-graphxr">3.4.3 Intégration GraphXR</h3>
+<p>GraphXR n’est pas présenté comme un moteur développé entièrement à partir de zéro dans ce PE, mais comme un <strong>module de visualisation immersive intégré</strong> au prototype. Le travail du projet porte surtout sur son <strong>couplage</strong> avec l’agent IA, le graphe de transport, les commandes utilisateur et la <strong>synchronisation</strong> des résultats.</p>
+<p><strong>Paramètres d’intégration retenus :</strong></p>
+<table>
+<thead>
+<tr>
+<th>Élément</th>
+<th>Détail</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Viewer</td>
+<td><code>/viewer</code> avec paramètres <code>session</code>, <code>sync</code>, <code>api</code>, <code>embedded</code></td>
+</tr>
+<tr>
+<td>Sync</td>
+<td>Poll <code>/api/transport/graph3d/sync/{client_id}</code> toutes les ~900 ms</td>
+</tr>
+<tr>
+<td>Session</td>
+<td>Chargement via <code>/api/transport/graph3d/session/{session_id}</code></td>
+</tr>
+<tr>
+<td>Rendu 3D/VR</td>
+<td>Babylon.js, WebXR</td>
+</tr>
+<tr>
+<td>Lancement</td>
+<td>Automatisé par <code>run_web_app.ps1</code> (sauf <code>-SkipGraphXR</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>[À COMPLÉTER : liste exacte des fichiers GraphXR modifiés spécifiquement pour ce PE vs code réutilisé tel quel]</p>
+<p>[CAPTURE À AJOUTER : GraphXR affichant un graphe 3D de transport]</p>
+<h3 id="344-mode-vr-et-webxr">3.4.4 Mode VR et WebXR</h3>
+<p>Le mode VR sur <strong>Meta Quest</strong> a été validé comme <strong>démonstration immersive fonctionnelle</strong>. Il permet d’explorer le graphe 3D dans un environnement <strong>WebXR</strong>. Cependant, son utilisation nécessite une <strong>configuration HTTPS</strong>, mise en place via <strong>proxy/ngrok</strong> dans le cadre du prototype (<code>run_web_app.ps1 -QuestVR</code>, <code>proxy-vr.js</code> sur le port <strong>8080</strong>).</p>
+<p>Cette contrainte montre que la fonctionnalité est <strong>démontrable et opérationnelle</strong> en environnement de test, mais qu’elle demanderait une <strong>intégration plus propre</strong> (certificat, déploiement unifié) pour un déploiement final.</p>
+<p>[CAPTURE À AJOUTER : mode VR / Quest ou interface WebXR]</p>
+<h3 id="345-compl%C3%A9mentarit%C3%A9-2d--3d--vr">3.4.5 Complémentarité 2D / 3D / VR</h3>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Apport</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>2D</strong></td>
+<td>Lecture rapide, repères géographiques, itinéraires sur fond cartographique</td>
+</tr>
+<tr>
+<td><strong>3D</strong></td>
+<td>Exploration relationnelle du graphe, mise en évidence des connexions</td>
+</tr>
+<tr>
+<td><strong>VR</strong></td>
+<td>Immersion pour démonstration, parcours du réseau en environnement WebXR</td>
+</tr>
+</tbody>
+</table>
+<p>Les trois modes partagent la même source de vérité côté backend (résultats transport, session 3D), mais servent des <strong>intentions de lecture</strong> différentes.</p>
+<h3 id="346-synchronisation-interface--agent">3.4.6 Synchronisation interface / agent</h3>
+<p>La liaison entre l’agent, le transport et l’interface repose sur trois mécanismes :</p>
+<ol>
+<li>L’agent exécute un outil <code>cspe_*</code> qui appelle le backend (HTTP).</li>
+<li>Le backend exécute la logique transport et prépare les <strong>commandes shell</strong> (ex. afficher itinéraire, ouvrir GraphXR).</li>
+<li>Le frontend <strong>poll</strong> régulièrement <code>/api/shell/poll</code> et met à jour la carte et les iframes.</li>
+</ol>
+<ul>
+<li><strong>Carte 2D :</strong> URLs HTML Mapbox servies par le backend, intégrées en iframe ; overlays exploration/itinéraire via endpoints dédiés.</li>
+<li><strong>GraphXR :</strong> session JSON créée côté backend, viewer chargé avec paramètres <code>session</code>, <code>sync</code>, <code>api</code> ; polling sync toutes les <strong>~900 ms</strong>.</li>
+</ul>
+<p>Cette architecture <strong>découple</strong> la réponse de l’agent et l’application des effets visuels, ce qui améliore la robustesse en théorie, mais peut produire des <strong>désynchronisations</strong> si le poll frontend ne fonctionne pas correctement (ex. mauvaise URL API en mode Quest).</p>
+<pre><code class="language-mermaid"><div class="mermaid">flowchart LR
+  Agent["Agent — outils cspe_*"]
+  API["Backend FastAPI"]
+  Shell["File /api/shell/*"]
+  React["Écoute commandes UI"]
+  Map["Carte 2D"]
+  GXR["GraphXR viewer"]
+
+  Agent --> API
+  API --> Shell
+  React --> Shell
+  Shell --> React
+  React --> Map
+  API --> GXR
+</div></code></pre>
+<p>[DIAGRAMME À INSÉRER : modules backend FastAPI et flux de commandes UI]</p>
+<hr>
+<h1 id="4-r%C3%A9alisation-tests-et-validation">4. Réalisation, tests et validation</h1>
+<h2 id="41-organisation-du-d%C3%A9veloppement">4.1 Organisation du développement</h2>
+<p>J’ai suivi une démarche <strong>progressive</strong> : j’ai d’abord construit les briques transport et visualisation comme modules fonctionnels indépendants, avant d’intégrer l’agent IA pour les piloter par commandes naturelles, en texte puis en voix.</p>
+<p>[À COMPLÉTER : dates ou périodes exactes par phase si vous souhaitez les inclure]</p>
+<h3 id="411-cadrage-et-construction-du-graphe">4.1.1 Cadrage et construction du graphe</h3>
+<p>La première phase a consisté à comprendre le sujet P26, définir le périmètre du prototype et identifier les trois blocs principaux (agent, transport, visualisation) ainsi que le rôle du backend FastAPI. J’ai ensuite mis en place le chargement GTFS, la construction du graphe NetworkX, le bundle pré-calculé et les mécanismes de cache nécessaires à un démarrage acceptable.</p>
+<h3 id="412-d%C3%A9veloppement-progressif-des-modules">4.1.2 Développement progressif des modules</h3>
+<p>Une fois la base transport fonctionnelle, j’ai ajouté l’interface 2D pour afficher les stations, les itinéraires et les premiers résultats sur une carte Mapbox. Le backend FastAPI a ensuite servi de couche d’intégration entre les données, l’interface et les commandes de l’agent IA. La visualisation GraphXR et le mode VR ont été intégrés dans un second temps, avant l’ajout de l’agent IA, des outils <code>cspe_*</code>, du routeur d’intentions et des tests de stabilisation.</p>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Contenu principal</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Interface 2D</td>
+<td>Carte Mapbox, stations, itinéraires</td>
+</tr>
+<tr>
+<td>Backend / API</td>
+<td>Endpoints transport, file de commandes shell</td>
+</tr>
+<tr>
+<td>GraphXR / VR</td>
+<td>Viewer 3D, sync sessions, mode Quest (HTTPS)</td>
+</tr>
+<tr>
+<td>Agent IA</td>
+<td>Outils <code>cspe_*</code>, voix, mode texte de test</td>
+</tr>
+<tr>
+<td>Stabilisation</td>
+<td>Tests unitaires, scénarios démo, logs d’activité</td>
+</tr>
+</tbody>
+</table>
+<h3 id="413-travail-solo-et-pistes-abandonn%C3%A9es">4.1.3 Travail solo et pistes abandonnées</h3>
+<p>J’ai réalisé ce projet <strong>seul</strong>, ce qui m’a permis une <strong>vision système globale</strong> (données, backend, frontend, IA, VR), mais a aussi <strong>ralenti</strong> certaines phases : intégration, tests croisés, documentation. J’ai dû faire des <strong>choix de priorité</strong> pour garder un prototype démontrable dans le temps imparti.</p>
+<p>J’avais d’abord envisagé une interface simplifiée avec <strong>Streamlit</strong>, avant de la <strong>remplacer</strong> par <strong>React/Vite</strong>, plus adaptée à l’intégration de la carte, du rail agent, du backend et de GraphXR.</p>
+<h2 id="42-sc%C3%A9narios-de-validation">4.2 Scénarios de validation</h2>
+<p>Les scénarios de test sont décrits de manière <strong>générique</strong> dans le rapport, par exemple « Station A vers Station B », mais les captures peuvent montrer des <strong>exemples réels</strong> issus de la démonstration.</p>
+<table>
+<thead>
+<tr>
+<th>Scénario</th>
+<th>Commande (ex.)</th>
+<th>Outil attendu</th>
+<th>Résultat attendu</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Itinéraire</td>
+<td>« Calcule un itinéraire de [A] à [B]. »</td>
+<td><code>cspe_compute_route</code> / <code>cspe_route</code></td>
+<td>Chemin sur graphe, overlay carte, réponse agent</td>
+</tr>
+<tr>
+<td>Station</td>
+<td>« Trouve la station [Nom]. »</td>
+<td><code>cspe_search_stops</code></td>
+<td>Candidats, centrage carte possible</td>
+</tr>
+<tr>
+<td>POI</td>
+<td>« Quels restaurants autour de [Station] ? »</td>
+<td><code>cspe_nearby_pois</code> / <code>cspe_explore_area</code></td>
+<td>POI filtrés, affichage carte</td>
+</tr>
+<tr>
+<td>Données dynamiques</td>
+<td>« Prochains départs à [Station]. »</td>
+<td><code>cspe_show_station_or_line_info</code></td>
+<td>Enrichissement IDFM si configuré</td>
+</tr>
+<tr>
+<td>GraphXR / VR</td>
+<td>« Ouvre la vue 3D »</td>
+<td><code>cspe_open_graph3d</code></td>
+<td>Session 3D, iframe ou viewer Quest</td>
+</tr>
+</tbody>
+</table>
+<p>[À COMPLÉTER : confirmer quels scénarios IDFM ont été réellement validés en démo]</p>
+<h2 id="43-r%C3%A9sultats-observ%C3%A9s">4.3 Résultats observés</h2>
+<p>Le tableau ci-dessous synthétise les résultats attendus pour les principaux scénarios de validation.</p>
+<table>
+<thead>
+<tr>
+<th>Commande utilisateur (ex.)</th>
+<th>Intention détectée</th>
+<th>Outil appelé</th>
+<th>Résultat backend</th>
+<th>Mise à jour interface</th>
+<th>Résultat attendu</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>« Itinéraire A → B »</td>
+<td>route</td>
+<td><code>cspe_compute_route</code></td>
+<td>JSON route + shell cmds</td>
+<td>Carte overlay itinéraire</td>
+<td>Trajet affiché + réponse agent</td>
+</tr>
+<tr>
+<td>« Trouve station X »</td>
+<td>search_stop</td>
+<td><code>cspe_search_stops</code></td>
+<td>Liste stops</td>
+<td>Focus carte</td>
+<td>Station(s) proposée(s)</td>
+</tr>
+<tr>
+<td>« POI autour de X »</td>
+<td>explore_poi</td>
+<td><code>cspe_nearby_pois</code></td>
+<td>POI JSON</td>
+<td>Overlay exploration</td>
+<td>POI visibles</td>
+</tr>
+<tr>
+<td>« Prochains départs »</td>
+<td>station_info</td>
+<td><code>cspe_show_station_or_line_info</code></td>
+<td>Enrichissement IDFM</td>
+<td>Rail / texte</td>
+<td>Horaires si API OK</td>
+</tr>
+<tr>
+<td>« Ouvre le 3D »</td>
+<td>graph3d</td>
+<td><code>cspe_open_graph3d</code></td>
+<td>Session 3D</td>
+<td>Iframe GraphXR</td>
+<td>Graphe 3D visible</td>
+</tr>
+</tbody>
+</table>
+<p>Plusieurs tests automatisés ont été mis en place pour vérifier le fonctionnement des principaux modules : exploration de zones, routage d’intentions, enrichissement IDFM, langue des réponses. Ils valident surtout la <strong>couche déterministe</strong>. Les tests <strong>bout en bout</strong> voix + interface restent limités et reposent en grande partie sur la <strong>démonstration manuelle</strong>.</p>
+<p>Les logs d’activité permettent de retracer l’<strong>intention détectée</strong>, l’<strong>outil appelé</strong>, le <strong>résultat</strong> backend et les <strong>commandes shell</strong> enqueue (delta, pending). Les extraits détaillés sont proposés en <strong>Annexe E</strong>.</p>
+<p>[CAPTURE À AJOUTER : commande vocale ou texte demandant un itinéraire]<br>
+[CAPTURE À AJOUTER : réponse de l’agent après calcul d’itinéraire]<br>
+[CAPTURE À AJOUTER : carte 2D affichant un itinéraire]<br>
+[CAPTURE À AJOUTER : recherche de station]<br>
+[CAPTURE À AJOUTER : POI autour d’une station]<br>
+[CAPTURE À AJOUTER : prochains départs / enrichissement IDFM si testé]<br>
+[CAPTURE À AJOUTER : logs ou console de test]</p>
+<h2 id="44-limites-du-prototype">4.4 Limites du prototype</h2>
+<p>Au-delà de l’agent IA, j’ai rencontré des limites sur l’ensemble de la chaîne technique :</p>
+<ol>
+<li><strong>Données pas toujours complètes</strong> — la construction du graphe a parfois été compliquée par des correspondances ou métadonnées imparfaites.</li>
+<li><strong>Calcul initial du graphe trop lourd</strong> — la reconstruction GTFS → graphe reste coûteuse sans cache.</li>
+<li><strong>Nécessité d’un bundle pré-calculé</strong> — dépendance à <code>graph_bundle.pkl</code> et au script de rebuild.</li>
+<li><strong>Latence</strong> de la chaîne voix → IA → outil → backend → interface.</li>
+<li><strong>Bugs de synchronisation</strong> — l’agent peut répondre correctement sans que la carte ou GraphXR se mettent à jour (file shell non consommée, mauvaise URL API en mode Quest, vue incorrecte).</li>
+<li><strong>Travail solo</strong> — l’avancement a été plus long, avec de nombreux modules à maintenir seul.</li>
+<li><strong>VR fonctionnelle en démo</strong> mais dépendante d’HTTPS/ngrok.</li>
+<li><strong>Projet non industrialisé</strong> — sécurité, montée en charge et finition UX non traitées.</li>
+</ol>
+<p>J’ai notamment dû mettre en place des mécanismes de cache parce que le calcul initial du réseau était trop lourd pour être relancé à chaque démarrage. Les problèmes de synchronisation entre l’agent et l’interface m’ont aussi obligé à repousser une partie des corrections en fin de projet, alors que la réponse textuelle de l’agent était déjà correcte.</p>
+<hr>
+<h1 id="5-bilan-critique-et-perspectives">5. Bilan critique et perspectives</h1>
+<h2 id="51-bilan-technique">5.1 Bilan technique</h2>
+<p>Le prototype démontre l’<strong>intégration d’un système complet</strong> répondant au cahier des charges :</p>
+<ul>
+<li>graphe de transport GTFS / NetworkX ;</li>
+<li>backend FastAPI structuré ;</li>
+<li>architecture <strong>IA par tool-calling</strong> ;</li>
+<li>visualisation <strong>2D et 3D/VR</strong> ;</li>
+<li>couplage voix / texte pour l’exploration du réseau.</li>
+</ul>
+<p>Les <strong>difficultés majeures</strong> concernent surtout la <strong>synchronisation</strong> entre l’agent et l’interface, et la <strong>latence</strong> globale — problèmes typiques des architectures multi-processus et multi-modales.</p>
+<h2 id="52-bilan-organisationnel">5.2 Bilan organisationnel</h2>
+<p>Travailler seul m’a donné de la <strong>flexibilité</strong> sur les choix techniques, mais aussi une <strong>charge élevée</strong> : j’ai dû <strong>prioriser</strong> les scénarios réellement démontrables et accepter un avancement parfois <strong>long</strong> sur l’intégration finale. Le <strong>découpage en phases</strong> (transport → interface → backend → GraphXR → agent IA) s’est néanmoins avéré pertinent pour structurer le travail.</p>
+<h2 id="53-bilan-personnel">5.3 Bilan personnel</h2>
+<p><strong>Acquis :</strong></p>
+<ul>
+<li>vision <strong>système</strong> couvrant données, backend, frontend, IA et visualisation ;</li>
+<li>compréhension pratique de <strong>GTFS</strong>, <strong>NetworkX</strong>, APIs REST ;</li>
+<li>montée en compétence sur les <strong>architectures agentiques</strong> et le tool-calling ;</li>
+<li>expérience concrète de <strong>WebXR</strong> et contraintes Quest.</li>
+</ul>
+<p><strong>Regrets / améliorations personnelles :</strong></p>
+<p>Avec du recul, j’aurais dû <strong>stabiliser plus tôt</strong> les scénarios de test et <strong>documenter davantage</strong> les choix techniques au fil du développement. Le projet comportait beaucoup de modules différents, ce qui m’a entraîné vers des corrections tardives, notamment sur la synchronisation entre l’agent IA et l’interface. Un <strong>cadrage plus rapide</strong> du périmètre essentiel m’aurait permis de concentrer plus tôt les efforts sur les fonctionnalités démontrables.</p>
+<p>[À COMPLÉTER : éléments personnels supplémentaires que vous souhaitez mettre en avant à la soutenance]</p>
+<h2 id="54-perspectives-dam%C3%A9lioration">5.4 Perspectives d’amélioration</h2>
+<p>Si je devais prolonger ce travail, je prioriserais surtout la <strong>synchronisation</strong> entre l’agent, la carte et GraphXR, puis la <strong>réduction de latence</strong> et un <strong>déploiement VR/WebXR</strong> plus propre (sans ngrok). Le tableau ci-dessous reprend les principales pistes identifiées :</p>
+<table>
+<thead>
+<tr>
+<th>Axe</th>
+<th>Piste</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Synchronisation</td>
+<td>Renforcer la fiabilité agent ↔ carte ↔ GraphXR (WebSocket, ack UI)</td>
+</tr>
+<tr>
+<td>Cache</td>
+<td>Bundle versionné, invalidation plus robuste</td>
+</tr>
+<tr>
+<td>Latence</td>
+<td>Réduire allers-retours, warmup services</td>
+</tr>
+<tr>
+<td>Gestion d’erreurs</td>
+<td>Retours utilisateur explicites si outil ou sync échoue</td>
+</tr>
+<tr>
+<td>Voix</td>
+<td>Mot d’activation, fenêtre d’écoute, confirmation de commandes</td>
+</tr>
+<tr>
+<td>VR / WebXR</td>
+<td>Déploiement HTTPS natif sans ngrok</td>
+</tr>
+<tr>
+<td>Interactions VR</td>
+<td>Menus, filtres, locomotion plus aboutis</td>
+</tr>
+<tr>
+<td>Données</td>
+<td>GTFS plus récent, meilleures correspondances</td>
+</tr>
+<tr>
+<td>Tests</td>
+<td>Suite e2e automatisée (API + shell + snapshots UI)</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h1 id="6-conclusion-g%C3%A9n%C3%A9rale">6. Conclusion générale</h1>
+<p>Ce Projet Étudiant a permis de réaliser un <strong>prototype fonctionnel et démontrable</strong> répondant au sujet officiel P26 : coupler <strong>visualisation immersive</strong>, <strong>architecture agentique IA</strong> et <strong>interaction voice-to-command</strong> pour l’exploration d’un <strong>graphe complexe de réseau de transport</strong>.</p>
+<p>L’architecture en trois blocs — agent IA conversationnel, moteur transport GTFS, interfaces 2D/3D/VR — unifiée par un <strong>backend FastAPI</strong>, illustre l’intérêt du couplage demandé par le cahier des charges. L’intégration de <strong>données distribuées</strong> (GTFS local, API IDFM, recherche web) et la restitution multimodale (carte Mapbox, GraphXR, mode VR Quest) montrent comment voix, IA, graphe et immersion peuvent coexister pour explorer un réseau de transport complexe.</p>
+<p>La <strong>valeur pédagogique</strong> réside autant dans l’intégration technique que dans la prise de conscience des <strong>limites</strong> d’un tel prototype : données incomplètes, routage simplifié, latence, synchronisation UI, configuration VR. Les <strong>perspectives</strong> identifiées restent réalistes et hors scope d’industrialisation immédiate.</p>
+<p>Le projet répond à la problématique centrale dans une logique de <strong>démonstration académique</strong>, sans prétendre à un produit final industrialisé.</p>
+<hr>
+<h1 id="r%C3%A9f%C3%A9rences">Références</h1>
+<ol>
+<li>GTFS Reference — <a href="https://gtfs.org/documentation/schedule/reference/">https://gtfs.org/documentation/schedule/reference/</a></li>
+<li>Open Data IDFM — <a href="https://prim.iledefrance-mobilites.fr/">https://prim.iledefrance-mobilites.fr/</a></li>
+<li>Navitia / PRIM documentation — <a href="https://doc.navitia.io/">https://doc.navitia.io/</a></li>
+<li>NetworkX Documentation — <a href="https://networkx.org/documentation/stable/">https://networkx.org/documentation/stable/</a></li>
+<li>FastAPI Documentation — <a href="https://fastapi.tiangolo.com/">https://fastapi.tiangolo.com/</a></li>
+<li>React Documentation — <a href="https://react.dev/">https://react.dev/</a></li>
+<li>Vite Documentation — <a href="https://vitejs.dev/">https://vitejs.dev/</a></li>
+<li>Mapbox GL / Mapbox Docs — <a href="https://docs.mapbox.com/">https://docs.mapbox.com/</a></li>
+<li>OpenAI API Documentation — <a href="https://platform.openai.com/docs">https://platform.openai.com/docs</a></li>
+<li>WebXR Device API — <a href="https://www.w3.org/TR/webxr/">https://www.w3.org/TR/webxr/</a></li>
+<li>Babylon.js Documentation — <a href="https://doc.babylonjs.com/">https://doc.babylonjs.com/</a></li>
+<li>OpenStreetMap — <a href="https://www.openstreetmap.org/about">https://www.openstreetmap.org/about</a></li>
+<li>Bast, H. et al. — Algorithmes de graphes et routage (réf. générale algorithms on graphs) [À COMPLÉTER : référence académique précise si citee en cours]</li>
+<li>Ware, C. — <em>Information Visualization: Perception for Design</em> (visualisation de l’information) [À COMPLÉTER : édition]</li>
+<li>Russell, S., Norvig, P. — <em>Artificial Intelligence: A Modern Approach</em> (agents et planification) [À COMPLÉTER : édition]</li>
+<li>Notes de travail personnelles — architecture et présentation du prototype CSPE</li>
+<li>Ollama — <a href="https://ollama.com/">https://ollama.com/</a> (expérimentation planner local)</li>
+<li>Azure Cognitive Services Speech — <a href="https://learn.microsoft.com/azure/ai-services/speech-service/">https://learn.microsoft.com/azure/ai-services/speech-service/</a></li>
+<li>Meta Quest Developer — WebXR browsers <a href="https://developer.oculus.com/documentation/web/">https://developer.oculus.com/documentation/web/</a></li>
+<li>[À COMPLÉTER : article ou cours UTT/MIND sur projets étudiants ou visualisation immersive si souhaité]</li>
+</ol>
+<hr>
+<h1 id="annexes">Annexes</h1>
+<h2 id="annexe-a--pipeline-gtfs-vers-graphe">Annexe A — Pipeline GTFS vers graphe</h2>
+<table>
+<thead>
+<tr>
+<th>Étape</th>
+<th>Fichier / script</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Données brutes</td>
+<td>Fichiers GTFS locaux</td>
+</tr>
+<tr>
+<td>Chargement</td>
+<td>Module <code>graph_loader</code> — <code>load_gtfs()</code></td>
+</tr>
+<tr>
+<td>Arêtes ride</td>
+<td><code>build_ride_edges()</code></td>
+</tr>
+<tr>
+<td>Transfers GTFS</td>
+<td><code>build_gtfs_transfer_edges()</code></td>
+</tr>
+<tr>
+<td>Transfers inférés</td>
+<td><code>build_transfer_edges()</code></td>
+</tr>
+<tr>
+<td>Combinaison</td>
+<td><code>combine_edges()</code></td>
+</tr>
+<tr>
+<td>Positions</td>
+<td><code>build_pos_all()</code>, <code>to_pos_dict()</code></td>
+</tr>
+<tr>
+<td>Bundle</td>
+<td>Script <code>rebuild_routing_bundle.py</code> → <code>graph_bundle.pkl</code></td>
+</tr>
+<tr>
+<td>Version cache</td>
+<td><code>BUNDLE_CACHE_VERSION = 5</code></td>
+</tr>
+</tbody>
+</table>
+<p>Commande indicative :</p>
+<pre class="hljs"><code><div>python scripts/rebuild_routing_bundle.py
+</div></code></pre>
+<p>[À COMPLÉTER : temps de rebuild mesuré sur votre machine]</p>
+<h2 id="annexe-b--endpoints-api-principaux">Annexe B — Endpoints API principaux</h2>
+<p>Voir section 3.1.4. Endpoints health :</p>
+<ul>
+<li><code>GET /api/health</code></li>
+<li><code>GET /api/transport/bundle-health</code></li>
+</ul>
+<h2 id="annexe-c--catalogue-des-outils-de-lagent">Annexe C — Catalogue des outils de l’agent</h2>
+<p>Liste complète des 19 outils <code>cspe_*</code> — voir Tableau 5 (section 3.3.3).</p>
+<p>Domaines d’intention (routeur) : transport, poi, map_ui, visual_3d, general_chat.</p>
+<h2 id="annexe-d--sc%C3%A9narios-de-test-d%C3%A9taill%C3%A9s">Annexe D — Scénarios de test détaillés</h2>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Scénario</th>
+<th>Préconditions</th>
+<th>Commande</th>
+<th>Résultat attendu</th>
+<th>Statut</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>T1</td>
+<td>Itinéraire</td>
+<td>Bundle chargé</td>
+<td>« A → B »</td>
+<td>Route + carte</td>
+<td>[À COMPLÉTER]</td>
+</tr>
+<tr>
+<td>T2</td>
+<td>Station</td>
+<td>—</td>
+<td>« Trouve X »</td>
+<td>Candidats stops</td>
+<td>[À COMPLÉTER]</td>
+</tr>
+<tr>
+<td>T3</td>
+<td>POI</td>
+<td>Station connue</td>
+<td>« POI autour de X »</td>
+<td>Liste POI</td>
+<td>[À COMPLÉTER]</td>
+</tr>
+<tr>
+<td>T4</td>
+<td>IDFM</td>
+<td><code>IDFM_API_KEY</code></td>
+<td>« Prochains départs »</td>
+<td>Enrichissement</td>
+<td>[À COMPLÉTER]</td>
+</tr>
+<tr>
+<td>T5</td>
+<td>GraphXR</td>
+<td>GraphXR lancé</td>
+<td>« Ouvre 3D »</td>
+<td>Session + viewer</td>
+<td>[À COMPLÉTER]</td>
+</tr>
+</tbody>
+</table>
+<h2 id="annexe-e--logs">Annexe E — Logs</h2>
+<p>Exemple de champs à surligner dans les logs d’activité compacts :</p>
+<pre class="hljs"><code><div>intent=...
+tool=cspe_...
+shell_enqueued_delta=...
+shell_pending=...
+</div></code></pre>
+<p>[À COMPLÉTER : coller 1–2 extraits réels anonymisés]</p>
+<h2 id="annexe-f--configuration-vr--quest--https">Annexe F — Configuration VR / Quest / HTTPS</h2>
+<table>
+<thead>
+<tr>
+<th>Élément</th>
+<th>Détail</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Script</td>
+<td><code>run_web_app.ps1 -QuestVR</code></td>
+</tr>
+<tr>
+<td>Proxy</td>
+<td><code>proxy-vr.js</code> port 8080</td>
+</tr>
+<tr>
+<td>Tunnel</td>
+<td>ngrok (URL HTTPS unique)</td>
+</tr>
+<tr>
+<td>Variables</td>
+<td><code>VITE_API_BASE</code>, <code>VITE_GRAPHXR_VIEWER_URL</code> pointent vers l’URL HTTPS</td>
+</tr>
+<tr>
+<td>Contrainte</td>
+<td>WebXR Quest exige HTTPS</td>
+</tr>
+</tbody>
+</table>
+<p>Sans <code>-QuestVR</code> : stack locale HTTP classique (<code>127.0.0.1:5173</code>, API <code>:8787</code>).</p>
+<h2 id="annexe-g--captures-%C3%A0-ajouter">Annexe G — Captures à ajouter</h2>
+<p>Liste complète des captures à produire pour le PDF :</p>
+<ol>
+<li>Interface agent IA + rail</li>
+<li>Commande vocale (micro actif)</li>
+<li>Résultat texte agent</li>
+<li>Carte 2D (vue générale)</li>
+<li>Recherche station</li>
+<li>POI autour d’une station</li>
+<li>Itinéraire tracé</li>
+<li>Prochains départs / IDFM</li>
+<li>GraphXR 3D (graphe)</li>
+<li>Mode VR / Quest</li>
+<li>Logs / tests / terminal</li>
+</ol>
+<h2 id="annexe-h--guide-de-d%C3%A9monstration">Annexe H — Guide de démonstration</h2>
+<h3 id="ordre-de-lancement">Ordre de lancement</h3>
+<ol>
+<li>Vérifier <code>.env</code> (tokens sans les commiter)</li>
+<li>Lancer : <code>.\run_web_app.ps1</code> (ou <code>-QuestVR</code> pour Quest)</li>
+<li>Attendre : agent IA <code>:5055</code>, API <code>:8787</code>, frontend <code>:5173</code>, GraphXR <code>:3000</code></li>
+<li>Ouvrir le navigateur sur l’URL indiquée</li>
+</ol>
+<h3 id="commandes-de-test-texte">Commandes de test (texte)</h3>
+<ul>
+<li>« Calcule un itinéraire de Châtelet à Nation. »</li>
+<li>« Trouve la station République. »</li>
+<li>« Quels restaurants autour de Châtelet ? »</li>
+<li>« Ouvre la visualisation 3D du graphe. »</li>
+</ul>
+<h3 id="sc%C3%A9nario-soutenance-sugg%C3%A9r%C3%A9">Scénario soutenance suggéré</h3>
+<ol>
+<li>Présenter l’architecture (3 blocs + FastAPI)</li>
+<li>Démo texte : itinéraire + carte 2D</li>
+<li>Démo POI ou recherche station</li>
+<li>Ouvrir GraphXR 3D synchronisé</li>
+<li>(Option) Extraire Quest VR si configuration HTTPS prête</li>
+<li>Montrer un extrait de log prouvant tool + shell</li>
+</ol>
+<p>[À COMPLÉTER : durée cible de la démo, plan B si API lente]</p>
+<h2 id="annexe-i--variables-denvironnement-noms-uniquement">Annexe I — Variables d’environnement (noms uniquement)</h2>
+<p>Ne jamais inclure les valeurs secrètes dans le rapport.</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Usage indicatif</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MAPBOX_TOKEN</code></td>
+<td>Carte Mapbox</td>
+</tr>
+<tr>
+<td><code>OPENAI_API_KEY</code></td>
+<td>Orchestration OpenAI</td>
+</tr>
+<tr>
+<td><code>IDFM_API_KEY</code></td>
+<td>Enrichissement IDFM/Navitia</td>
+</tr>
+<tr>
+<td><code>AZURE_SPEECH_KEY</code></td>
+<td>Synthèse vocale [À COMPLÉTER : confirmer nom exact dans votre .env]</td>
+</tr>
+<tr>
+<td><code>AZURE_SPEECH_REGION</code></td>
+<td>Région Azure Speech [À COMPLÉTER]</td>
+</tr>
+<tr>
+<td><code>ATLAS_PYTHON</code></td>
+<td>Interpréteur Python agent IA</td>
+</tr>
+<tr>
+<td><code>ATLAS_INTENT_ROUTER</code></td>
+<td>Active routeur d’intentions</td>
+</tr>
+<tr>
+<td><code>ATLAS_PLANNER_BACKEND</code></td>
+<td>Backend planner (auto/openai/…)</td>
+</tr>
+<tr>
+<td><code>CSPE_FRONTEND_URL</code></td>
+<td>URL frontend pour outils</td>
+</tr>
+<tr>
+<td><code>PRODUCT_SHELL_URL</code></td>
+<td>URL backend FastAPI</td>
+</tr>
+<tr>
+<td><code>VITE_API_BASE</code></td>
+<td>Base API côté frontend</td>
+</tr>
+<tr>
+<td><code>VITE_GRAPHXR_VIEWER_URL</code></td>
+<td>URL viewer GraphXR</td>
+</tr>
+<tr>
+<td><code>GRAPHXR_PORT</code></td>
+<td>Port GraphXR</td>
+</tr>
+<tr>
+<td><code>CSPE_LOG_DIR</code></td>
+<td>Répertoire logs</td>
+</tr>
+<tr>
+<td><code>CSPE_ACTIVITY_LOG</code></td>
+<td>Fichier log activité</td>
+</tr>
+<tr>
+<td><code>CSPE_COMPACT_LOG</code></td>
+<td>Log compact</td>
+</tr>
+<tr>
+<td><code>CSPE_LOG_MODE</code></td>
+<td>Mode logging</td>
+</tr>
+<tr>
+<td><code>SERPAPI_API_KEY</code></td>
+<td>Recherche web (si utilisé) [À COMPLÉTER]</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h1 id="points-%C3%A0-v%C3%A9rifier-manuellement-avant-export-pdf">Points à vérifier manuellement avant export PDF</h1>
+<h2 id="captures-et-figures">Captures et figures</h2>
+<ul>
+<li><input type="checkbox" id="checkbox0"><label for="checkbox0">Ajouter toutes les captures listées en Annexe G</label></li>
+<li><input type="checkbox" id="checkbox1"><label for="checkbox1">Exporter les diagrammes Mermaid en images (Figures 1–4) si le convertisseur PDF ne les rend pas</label></li>
+<li><input type="checkbox" id="checkbox2"><label for="checkbox2">Vérifier la qualité des captures (lisibilité carte, rail agent, GraphXR)</label></li>
+</ul>
+<h2 id="donn%C3%A9es-et-chiffres">Données et chiffres</h2>
+<ul>
+<li><input type="checkbox" id="checkbox3"><label for="checkbox3">Confirmer </label><strong>date et version GTFS</strong> (section 3.2.1)</li>
+<li><input type="checkbox" id="checkbox4"><label for="checkbox4">Mesurer et inscrire </label><strong>nombre de nœuds/arêtes</strong> du graphe</li>
+<li><input type="checkbox" id="checkbox5"><label for="checkbox5">Confirmer </label><strong>temps de rebuild</strong> du bundle (Annexe A)</li>
+</ul>
+<h2 id="graphxr">GraphXR</h2>
+<ul>
+<li><input type="checkbox" id="checkbox6"><label for="checkbox6">Lister précisément les </label><strong>fichiers GraphXR modifiés</strong> pour le PE (section 3.4.3)</li>
+<li><input type="checkbox" id="checkbox7"><label for="checkbox7">Vérifier que les captures 3D/VR correspondent au build actuel</label></li>
+</ul>
+<h2 id="tests-et-d%C3%A9mo">Tests et démo</h2>
+<ul>
+<li><input type="checkbox" id="checkbox8"><label for="checkbox8">Cocher les scénarios </label><strong>réellement validés</strong> (Annexe D)</li>
+<li><input type="checkbox" id="checkbox9"><label for="checkbox9">Préparer un </label><strong>plan B</strong> soutenance si latence ou sync échoue</li>
+<li><input type="checkbox" id="checkbox10"><label for="checkbox10">Relire les </label><strong>logs</strong> à joindre ou surligner (Annexe E)</li>
+</ul>
+<h2 id="r%C3%A9daction-personnelle">Rédaction personnelle</h2>
+<ul>
+<li><input type="checkbox" id="checkbox11"><label for="checkbox11">Compléter le </label><strong>semestre</strong> et dates sur la page de garde</li>
+<li><input type="checkbox" id="checkbox12"><label for="checkbox12">Relire le </label><strong>bilan personnel</strong> (section 5.3) — ton et sincérité</li>
+<li><input type="checkbox" id="checkbox13"><label for="checkbox13">Remplir tous les blocs </label><strong><code>[À COMPLÉTER : …]</code></strong></li>
+<li><input type="checkbox" id="checkbox14"><label for="checkbox14">Compléter les </label><strong>références académiques</strong> marquées à compléter</li>
+</ul>
+<h2 id="conformit%C3%A9">Conformité</h2>
+<ul>
+<li><input type="checkbox" id="checkbox15"><label for="checkbox15">Aucune </label><strong>clé API</strong> ou secret dans le PDF</li>
+<li><input type="checkbox" id="checkbox16"><label for="checkbox16">Aucune mention hors périmètre (modules personnels retirés)</label></li>
+<li><input type="checkbox" id="checkbox17"><label for="checkbox17">Vérifier pagination (~30–40 pages après ajout captures)</label></li>
+<li><input type="checkbox" id="checkbox18"><label for="checkbox18">Relire que le terme « Product Shell » n’apparaît pas</label></li>
+<li><input type="checkbox" id="checkbox19"><label for="checkbox19">Confirmer formulation honnête sur </label><strong>routage</strong> et <strong>GraphXR intégré</strong></li>
+</ul>
+<hr>
+<p><em>Fin du rapport — Projet Étudiant CSPE — Ismail KHOUNA — [À COMPLÉTER : date de finalisation]</em></p>
+
+</body>
+</html>

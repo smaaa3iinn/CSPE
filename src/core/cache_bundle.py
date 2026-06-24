@@ -9,8 +9,8 @@ import pandas as pd
 
 from src.core.graph_loader import EDGE_COLUMNS, build_graphs_by_mode
 
-CACHE_VERSION = 5
-GRAPH_MODES = ("all", "metro", "rail", "tram", "bus", "other")
+CACHE_VERSION = 6
+GRAPH_MODES = ("all", "all_mb", "metro", "rail", "tram", "bus", "other")
 
 
 def _default_bundle_path(project_root: str | Path) -> Path:
@@ -172,7 +172,12 @@ def _edge_aggregates(edges_clean: list[dict[str, Any]]) -> dict[str, dict[tuple[
             continue
 
         key = tuple(sorted((source, target)))
-        for bucket in ("all", mode):
+        buckets = ["all"]
+        if mode != "bus":
+            buckets.append("all_mb")
+        if mode not in buckets:
+            buckets.append(mode)
+        for bucket in buckets:
             aggregate = aggregates[bucket].setdefault(
                 key,
                 {

@@ -16,6 +16,9 @@ MODE_COLORS = {
     "selected": "#f97316",
 }
 
+# Bright neon green for 3D/VR route paths (distinct from 2D map orange highlight).
+GRAPH3D_ROUTE_COLOR = "#39ff14"
+
 METRO_LINE_COLORS = {
     "1": "#FECD02",
     "2": "#0E75BC",
@@ -142,7 +145,7 @@ def _normalize_route_refs(data: dict[str, Any]) -> list[dict[str, str]]:
 def _pick_route_ref(route_refs: list[dict[str, str]], current_mode: str) -> dict[str, str] | None:
     if not route_refs:
         return None
-    if current_mode and current_mode != "all":
+    if current_mode and current_mode not in ("all", "all_mb"):
         for ref in route_refs:
             if ref.get("mode") == current_mode:
                 return ref

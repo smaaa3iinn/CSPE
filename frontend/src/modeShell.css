@@ -22,6 +22,11 @@
   --transport-br-w: 0px;
 }
 
+.app-root--graph3d-fullscreen .app-shell__main {
+  --transport-br-right: 0px;
+  --transport-br-w: 0px;
+}
+
 /* Shared full-bleed mode layout + floating right panel (same max width as transport top-left card) */
 
 .mode-page {

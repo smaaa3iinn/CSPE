@@ -40,6 +40,10 @@ export function transportViewFingerprint(ctx: TransportViewContext): string {
     selected_stop_id: ctx.selectedStopId,
     selected_station_id: ctx.selectedStationId,
     exploration_seq: useAppStore.getState().transportExplorationSeq,
+    route_legs_sig: (useAppStore.getState().transportRouteLegs || [])
+      .map((leg) => leg.summary)
+      .join("|"),
+    route_meta: useAppStore.getState().transportRouteMeta,
   });
 }
 
@@ -146,7 +150,59 @@ export function buildTransportBaseMapBody(
   return body;
 }
 
+/** Serializable transport view for VR tab hydration from the 2D host tab. */
+export type TransportViewSnapshot = {
+  graphMode: TransportViewContext["graphMode"];
+  useLcc: boolean;
+  graphViz: TransportViewContext["graphViz"];
+  pathIds: string[] | null;
+  pathStationIds: string[] | null;
+  showTransfers: boolean;
+  selectedStopId: string | null;
+  selectedStationId: string | null;
+  routeMeta: string | null;
+  routeLegs: import("../api/client").TransportRouteLeg[] | null;
+  exploration: import("./atlasTransportTypes").TransportExplorationView | null;
+  explorationSeq: number;
+};
+
+export function buildTransportViewSnapshot(): TransportViewSnapshot {
+  const s = useAppStore.getState();
+  return {
+    graphMode: s.transportGraphMode,
+    useLcc: s.transportUseLcc,
+    graphViz: s.transportGraphViz,
+    pathIds: s.transportPathIds,
+    pathStationIds: s.transportStationPathIds,
+    showTransfers: s.transportShowTransfers,
+    selectedStopId: s.transportMapSelectionStopId,
+    selectedStationId: s.transportMapSelectionStationId,
+    routeMeta: s.transportRouteMeta,
+    routeLegs: s.transportRouteLegs,
+    exploration: s.transportExploration,
+    explorationSeq: s.transportExplorationSeq,
+  };
+}
+
+export function applyTransportViewSnapshot(snapshot: TransportViewSnapshot): void {
+  const s = useAppStore.getState();
+  s.setTransportGraphMode(snapshot.graphMode);
+  s.setTransportUseLcc(snapshot.useLcc);
+  s.setTransportGraphViz(snapshot.graphViz);
+  s.setTransportPathIds(snapshot.pathIds);
+  s.setTransportStationPathIds(snapshot.pathStationIds);
+  s.setTransportShowTransfers(snapshot.showTransfers);
+  s.setTransportMapSelection({
+    stopId: snapshot.selectedStopId,
+    stationId: snapshot.selectedStationId,
+  });
+  s.setTransportRouteMeta(snapshot.routeMeta);
+  s.setTransportRouteLegs(snapshot.routeLegs);
+  s.setTransportExploration(snapshot.exploration);
+}
+
 export function buildGraph3DSessionBody(ctx: TransportViewContext): Record<string, unknown> {
+  const s = useAppStore.getState();
   return {
     mode: ctx.graphMode,
     use_lcc: ctx.useLcc,
@@ -155,5 +211,7 @@ export function buildGraph3DSessionBody(ctx: TransportViewContext): Record<strin
     path_station_ids: ctx.pathStationIds ?? [],
     selected_stop_id: ctx.selectedStopId,
     selected_station_id: ctx.selectedStationId,
+    route_legs: s.transportRouteLegs ?? null,
+    route_meta: s.transportRouteMeta ?? null,
   };
 }

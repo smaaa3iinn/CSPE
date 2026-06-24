@@ -28,7 +28,7 @@ from src.core.project_logs import log_compact_line
 
 router = APIRouter(tags=["transport"])
 
-VALID_TRANSPORT_MODES = ("all", "metro", "rail", "tram", "bus", "other")
+VALID_TRANSPORT_MODES = ("all", "all_mb", "metro", "rail", "tram", "bus", "other")
 
 
 def _overlay_geo_counts(overlay: dict) -> tuple[int, int, bool]:
@@ -190,6 +190,8 @@ def post_transport_graph3d_session(
             path_station_ids=body.path_station_ids,
             selected_stop_id=body.selected_stop_id,
             selected_station_id=body.selected_station_id,
+            route_legs=body.route_legs,
+            route_meta=body.route_meta,
         )
         project = session["project"]
         session_id = session["session_id"]
@@ -224,6 +226,8 @@ def post_transport_graph3d_sync(body: TransportGraph3DSyncRequest) -> TransportG
             path_station_ids=body.path_station_ids,
             selected_stop_id=body.selected_stop_id,
             selected_station_id=body.selected_station_id,
+            route_legs=body.route_legs,
+            route_meta=body.route_meta,
         )
         return TransportGraph3DSyncPushResponse(**row)
     except ValueError as e:
@@ -250,7 +254,7 @@ def get_stops_search(
     station_first: bool = Query(False),
 ) -> dict:
     try:
-        if mode not in ("all", "metro", "rail", "tram", "bus", "other"):
+        if mode not in VALID_TRANSPORT_MODES:
             raise HTTPException(status_code=400, detail="invalid mode")
         matches = te.search_stops(
             q, limit=limit, mode=mode, use_lcc=use_lcc, station_first=station_first
@@ -456,7 +460,7 @@ def get_transport_stats(
     use_lcc: bool = Query(True),
 ) -> TransportStatsResponse:
     try:
-        if mode not in ("all", "metro", "rail", "tram", "bus", "other"):
+        if mode not in VALID_TRANSPORT_MODES:
             raise HTTPException(status_code=400, detail="invalid mode")
         n, e = te.graph_stats(mode, use_lcc)
         return TransportStatsResponse(mode=mode, use_lcc=use_lcc, nodes=n, edges=e)

@@ -2,6 +2,8 @@
 # Transport + shell APIs for the React app and Atlas tools are on the same FastAPI process (8787): /api/transport/*, /api/shell/*, etc.
 # Atlas tools: CSPE_FRONTEND_URL defaults to http://127.0.0.1:5173 (React/Vite origin for cspe_open_transport_map).
 # GraphXR 3D/VR viewer: http://127.0.0.1:3000/viewer (auto-started; override with VITE_GRAPHXR_VIEWER_URL).
+# Meta Quest WebXR (optional): .\run_web_app.ps1 -QuestVR
+#   Starts proxy-vr.js on :8080 + ngrok tunnel for a single HTTPS URL (required for Quest browser WebXR).
 #
 # Atlas interpreter: set ATLAS_PYTHON to the python.exe that has Atlas installed (e.g. global 3.12 or Atlas .venv).
 # Mapbox: MAPBOX_TOKEN in env or repo-root .env
@@ -9,7 +11,8 @@
 [CmdletBinding()]
 param(
     [switch]$SkipAtlas,
-    [switch]$SkipGraphXR
+    [switch]$SkipGraphXR,
+    [switch]$QuestVR
 )
 
 $ErrorActionPreference = "Stop"
@@ -107,20 +110,8 @@ function Stop-StaleAtlasProcesses {
     param([string]$AtlasRoot)
 
     $stopped = 0
-    try {
-        Invoke-WebRequest -Uri "http://127.0.0.1:5055/shutdown" -Method POST `
-            -ContentType "application/json" -Body '{"intent":"shutdown"}' `
-            -UseBasicParsing -TimeoutSec 2 -ErrorAction SilentlyContinue | Out-Null
-        Start-Sleep -Milliseconds 800
-    }
-    catch {
-        # Atlas not running or shutdown route unavailable
-    }
-
     $patterns = @(
-        'atlas_client\.app\.run_api',
-        'wake_service\\main\.py',
-        'wake_service/main\.py'
+        'atlas_client\.app\.run_api'
     )
     try {
         Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
@@ -286,6 +277,298 @@ function Stop-StaleGraphXRProcesses {
     }
 }
 
+function Get-LanIPv4Address {
+    try {
+        $candidate = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.IPAddress -notmatch '^(127\.|169\.254\.)' -and
+                $_.PrefixOrigin -ne 'WellKnown'
+            } |
+            Sort-Object InterfaceMetric |
+            Select-Object -First 1 -ExpandProperty IPAddress
+        if ($candidate) { return $candidate }
+    }
+    catch { }
+
+    try {
+        $lines = ipconfig | Select-String -Pattern 'IPv4 Address[\.\s]*:\s*(\d+\.\d+\.\d+\.\d+)'
+        foreach ($line in $lines) {
+            if ($line.Line -match '(\d+\.\d+\.\d+\.\d+)') {
+                $ip = $Matches[1]
+                if ($ip -notmatch '^(127\.|169\.254\.)') { return $ip }
+            }
+        }
+    }
+    catch { }
+
+    return $null
+}
+
+function Test-PortListening {
+    param([int]$Port)
+
+    try {
+        return @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue).Count -gt 0
+    }
+    catch { }
+
+    try {
+        $pattern = (":$Port\s")
+        return @(netstat -ano -p tcp | Select-String $pattern | Select-String 'LISTENING').Count -gt 0
+    }
+    catch { }
+
+    return $false
+}
+
+function Wait-PortListening {
+    param(
+        [int]$Port,
+        [string]$Label,
+        [int]$MaxSeconds = 45
+    )
+    $deadline = (Get-Date).AddSeconds($MaxSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-PortListening -Port $Port) {
+            Write-Host "  $Label listening on port $Port"
+            return
+        }
+        Start-Sleep -Milliseconds 400
+    }
+    throw "Timeout waiting for $Label to listen on port $Port"
+}
+
+function Stop-StaleVrProxyProcesses {
+    param([int]$Port = 8080)
+
+    $stopped = 0
+
+    function Stop-PidsOnPort {
+        param([string]$Source, [ref]$Count)
+        $pids = @()
+        try {
+            $pids += @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+                Select-Object -ExpandProperty OwningProcess -Unique)
+        }
+        catch { }
+
+        if ($pids.Count -eq 0) {
+            try {
+                $lines = netstat -ano -p tcp | Select-String (":$Port\s") | Select-String 'LISTENING'
+                foreach ($line in $lines) {
+                    $parts = ($line -replace '\s+', ' ').Trim().Split(' ')
+                    $procId = [int]$parts[-1]
+                    if ($procId -gt 0) { $pids += $procId }
+                }
+            }
+            catch { }
+        }
+
+        foreach ($procId in ($pids | Select-Object -Unique)) {
+            if ($procId -le 0) { continue }
+            $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$procId" -ErrorAction SilentlyContinue
+            $label = if ($proc -and $proc.CommandLine) { $proc.CommandLine } else { "pid=$procId" }
+            Write-Host "  Stopping VR proxy listener on :$Port ($Source) PID $procId"
+            Write-Host "    $label"
+            Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+            $Count.Value++
+        }
+    }
+
+    Stop-PidsOnPort -Source 'port' -Count ([ref]$stopped)
+
+    try {
+        Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+            Where-Object {
+                $cmd = $_.CommandLine
+                $cmd -and ($cmd -like '*proxy-vr.js*')
+            } |
+            ForEach-Object {
+                Write-Host "  Stopping stale proxy-vr.js node PID $($_.ProcessId)"
+                Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+                $stopped++
+            }
+    }
+    catch {
+        Write-Warning "Could not enumerate node processes for VR proxy cleanup: $_"
+    }
+
+    if ($stopped -gt 0) {
+        Start-Sleep -Milliseconds 800
+    }
+}
+
+function Resolve-NgrokCommand {
+    $cmd = Get-Command ngrok.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($cmd -and $cmd.Source) { return $cmd.Source }
+    $cmd = Get-Command ngrok -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($cmd -and $cmd.Source) { return $cmd.Source }
+    return $null
+}
+
+function Start-QuestVrProxyProcess {
+    param(
+        [string]$WorkDir,
+        [int]$Port = 8080
+    )
+
+    $proxyScript = Join-Path $WorkDir 'proxy-vr.js'
+    if (-not (Test-Path -LiteralPath $proxyScript)) {
+        throw "Quest VR proxy not found: $proxyScript"
+    }
+
+    if (-not (Get-Command node.exe -ErrorAction SilentlyContinue)) {
+        throw 'node.exe not found on PATH. Install Node.js to run proxy-vr.js.'
+    }
+
+    $proxyModules = Join-Path $WorkDir 'node_modules\http-proxy'
+    if (-not (Test-Path -LiteralPath $proxyModules)) {
+        Write-Host '    VR proxy dependency missing; running npm install in repo root...'
+        Push-Location $WorkDir
+        try {
+            npm install
+        }
+        finally {
+            Pop-Location
+        }
+    }
+
+    Stop-StaleVrProxyProcesses -Port $Port
+    if (Test-PortListening -Port $Port) {
+        throw "Port $Port is still in use after cleanup. Stop the process using it, then retry -QuestVR."
+    }
+
+    $escapedRoot = $WorkDir.Replace("'", "''")
+    $psCommand = @"
+Set-Location -LiteralPath '$escapedRoot'
+Write-Host 'CSPE Quest VR reverse proxy on http://0.0.0.0:$Port'
+Write-Host '  /      -> Vite :5173'
+Write-Host '  /viewer -> GraphXR :3000'
+Write-Host '  /api   -> Product API :8787'
+node proxy-vr.js
+"@
+
+    return Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+        '-NoExit',
+        '-Command',
+        $psCommand
+    ) -PassThru
+}
+
+function Start-QuestVrNgrokProcess {
+    param([int]$Port = 8080)
+
+    $ngrokExe = Resolve-NgrokCommand
+    if (-not $ngrokExe) {
+        Write-Host ''
+        Write-Host 'ERROR: ngrok was not found on PATH.' -ForegroundColor Red
+        Write-Host '  Install from https://ngrok.com/download'
+        Write-Host '  Authenticate once: ngrok config add-authtoken <your-token>'
+        Write-Host '  Docs: https://ngrok.com/docs/getting-started'
+        return $null
+    }
+
+    $escapedNgrok = $ngrokExe.Replace("'", "''")
+    $psCommand = @"
+Write-Host 'CSPE Quest VR ngrok tunnel -> http://127.0.0.1:$Port'
+Write-Host 'Copy the https://... forwarding URL into the Meta Quest browser.'
+& '$escapedNgrok' http http://127.0.0.1:$Port
+"@
+
+    return Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+        '-NoExit',
+        '-Command',
+        $psCommand
+    ) -PassThru
+}
+
+function Get-NgrokHttpsUrlForPort {
+    param([int]$Port = 8080)
+
+    try {
+        $resp = Invoke-RestMethod -Uri 'http://127.0.0.1:4040/api/tunnels' -TimeoutSec 3 -ErrorAction Stop
+        $tunnels = @($resp.tunnels)
+        if ($tunnels.Count -eq 0) {
+            return $null
+        }
+        $portSuffix = ":$Port"
+        $https = @($tunnels | Where-Object {
+                $_.public_url -like 'https://*' -and (
+                    ($_.config.addr -like "*$portSuffix") -or
+                    ($_.config.addr -eq "http://127.0.0.1:$Port") -or
+                    ($_.config.addr -eq "http://localhost:$Port")
+                )
+            } | Select-Object -First 1).public_url
+        if (-not $https) {
+            $https = @($tunnels | Where-Object { $_.public_url -like 'https://*' } | Select-Object -First 1).public_url
+        }
+        if (-not $https) {
+            $https = $tunnels[0].public_url
+        }
+        if ($https) {
+            return ($https -replace '/$', '')
+        }
+    }
+    catch {
+        return $null
+    }
+    return $null
+}
+
+function Get-NgrokHttpsUrl {
+    param([int]$MaxSeconds = 45, [int]$Port = 8080)
+
+    $deadline = (Get-Date).AddSeconds($MaxSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $https = Get-NgrokHttpsUrlForPort -Port $Port
+        if ($https) {
+            return $https
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    return $null
+}
+
+function Write-QuestVrInstructions {
+    param(
+        [string]$QuestHttpsUrl,
+        [string]$LanIp,
+        [int]$ProxyPort = 8080
+    )
+
+    Write-Host ''
+    Write-Host '========== Meta Quest 3 (WebXR) ==========' -ForegroundColor Cyan
+    Write-Host '  WebXR on Quest requires HTTPS (ngrok). Plain http:// LAN URLs will not enter VR.'
+    Write-Host '  Local app (PC):  http://127.0.0.1:5173'
+    if ($LanIp) {
+        Write-Host ("  LAN app (PC):    http://${LanIp}:5173  (no WebXR on Quest over HTTP)")
+    }
+    else {
+        Write-Host '  LAN app (PC):    http://<your-wifi-ip>:5173  (run ipconfig to find IPv4)'
+    }
+    Write-Host ("  VR proxy:        http://127.0.0.1:${ProxyPort}")
+    if ($QuestHttpsUrl) {
+        Write-Host ("  Quest HTTPS:     $QuestHttpsUrl") -ForegroundColor Green
+        Write-Host ("  GraphXR viewer:  $QuestHttpsUrl/viewer")
+        Write-Host ''
+        Write-Host '  On Quest: open Quest HTTPS URL -> Transport -> 3D/VR graph -> VR -> Enter VR'
+        Write-Host ''
+        Write-Host '  Vite env for this run (also set in .env if you restart Vite alone):'
+        Write-Host ("    VITE_API_BASE=$QuestHttpsUrl")
+        Write-Host ("    VITE_GRAPHXR_VIEWER_URL=$QuestHttpsUrl/viewer")
+        Write-Host ''
+        Write-Host '  Note: free ngrok URLs change each run. Do not commit old URLs to .env.'
+    }
+    else {
+        Write-Host '  Quest HTTPS:     (read https://... from the ngrok window; API poll timed out)'
+        Write-Host '  After you have the URL, set in .env before restarting Vite if needed:'
+        Write-Host '    VITE_API_BASE=https://<ngrok-host>'
+        Write-Host '    VITE_GRAPHXR_VIEWER_URL=https://<ngrok-host>/viewer'
+    }
+    Write-Host '=========================================='
+    Write-Host ''
+}
+
 function Start-GraphXRProcess {
     param(
         [string]$ViewerDir,
@@ -413,7 +696,7 @@ function Warm-AtlasTextSession {
         Write-Host "  Atlas text session warm."
     }
     catch {
-        Write-Warning ("Atlas text warmup failed; first chat may still wake Atlas: " + $_)
+        Write-Warning ("Atlas text warmup failed; first chat may still start Atlas: " + $_)
     }
 }
 
@@ -443,7 +726,6 @@ function Initialize-ProjectLogFiles {
 
 $AtlasRoot = Join-Path $Root "src\work\atlas"
 $runApi = Join-Path $AtlasRoot "src\atlas_client\app\run_api.py"
-$wakeMain = Join-Path $AtlasRoot "src\wake_service\main.py"
 
 $cspePy = Join-Path $Root ".venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $cspePy)) {
@@ -486,9 +768,13 @@ Write-Host ('  compact:  ' + $projectLogs.Compact)
 Write-Host ('  mode:     ' + $env:CSPE_LOG_MODE)
 
 $atlasApiProc = $null
-$atlasWakeProc = $null
 $bff = $null
 $graphxrProc = $null
+$vrProxyProc = $null
+$ngrokProc = $null
+$questVrHttpsUrl = $null
+$lanIp = $null
+$vrProxyPort = 8080
 $savedPythonPath = $env:PYTHONPATH
 $graphxrPort = 3000
 if ($env:GRAPHXR_PORT -and $env:GRAPHXR_PORT.Trim() -match '^\d+$') {
@@ -499,15 +785,15 @@ $graphxrViewerUrl = "http://127.0.0.1:$graphxrPort/viewer"
 
 try {
     if (-not $SkipAtlas) {
-        if (-not ((Test-Path -LiteralPath $runApi) -and (Test-Path -LiteralPath $wakeMain))) {
-            Write-Warning 'Atlas sources not found: expected run_api.py and wake_service. Chat will fail until Atlas runs on 5055.'
+        if (-not (Test-Path -LiteralPath $runApi)) {
+            Write-Warning 'Atlas sources not found: expected run_api.py. Chat will fail until Atlas runs on 5055.'
         }
         else {
             $atlasPy = Resolve-AtlasPython -AtlasRoot $AtlasRoot
             if (-not $atlasPy) {
                 throw 'Could not find python.exe for Atlas. Set ATLAS_PYTHON to your interpreter (see start_atlas.bat), or add src\work\atlas\.venv'
             }
-            Write-Host '[1] Starting Atlas headless (API + Wake, no UI) using:' $atlasPy
+            Write-Host '[1] Starting Atlas headless (API only, no UI) using:' $atlasPy
             Stop-StaleAtlasProcesses -AtlasRoot $AtlasRoot
 
             # Atlas must see its own tree first; CSPE PYTHONPATH breaks `python -m src.atlas_client...`.
@@ -516,12 +802,6 @@ try {
 
             $atlasApiProc = Start-Process -FilePath $atlasPy `
                 -ArgumentList @("-m", "src.atlas_client.app.run_api") `
-                -WorkingDirectory $AtlasRoot -WindowStyle Hidden -PassThru
-
-            Start-Sleep -Seconds 2
-
-            $atlasWakeProc = Start-Process -FilePath $atlasPy `
-                -ArgumentList @( (Join-Path $AtlasRoot "src\wake_service\main.py") ) `
                 -WorkingDirectory $AtlasRoot -WindowStyle Hidden -PassThru
 
             Wait-AtlasHttpOk -Url "http://127.0.0.1:5055/health" -Label "Atlas API" -MaxSeconds 120 `
@@ -572,10 +852,80 @@ try {
         }
     }
 
+    $lanIp = Get-LanIPv4Address
+
+    if ($QuestVR) {
+        Write-Host '[Quest VR] Starting HTTPS reverse proxy + ngrok for Meta Quest WebXR...'
+        try {
+            $vrProxyProc = Start-QuestVrProxyProcess -WorkDir $Root -Port $vrProxyPort
+            Wait-PortListening -Port $vrProxyPort -Label 'Quest VR proxy' -MaxSeconds 45
+            Wait-HttpOk -Url "http://127.0.0.1:$vrProxyPort/health" -Label 'Quest VR proxy health' -MaxSeconds 15
+            Write-Host "  VR proxy ready: http://127.0.0.1:$vrProxyPort (separate window)"
+
+            # Reuse an existing ngrok tunnel when still online (avoids ERR_NGROK_334 duplicate endpoint).
+            $questVrHttpsUrl = Get-NgrokHttpsUrlForPort -Port $vrProxyPort
+            if ($questVrHttpsUrl) {
+                Write-Host "  Reusing existing ngrok HTTPS URL: $questVrHttpsUrl"
+            }
+            else {
+                $ngrokProc = Start-QuestVrNgrokProcess -Port $vrProxyPort
+                if ($ngrokProc) {
+                    Write-Host '  ngrok started (separate window). Waiting for public HTTPS URL...'
+                    $questVrHttpsUrl = Get-NgrokHttpsUrl -MaxSeconds 45 -Port $vrProxyPort
+                }
+                else {
+                    Write-Warning 'Quest VR proxy is running, but ngrok was not started. WebXR on Quest still requires HTTPS.'
+                }
+            }
+
+            if ($questVrHttpsUrl) {
+                if (-not ($questVrHttpsUrl -match '^https://')) {
+                    Write-Warning "Unexpected ngrok URL (expected https): $questVrHttpsUrl"
+                }
+                else {
+                    Write-Host "  ngrok HTTPS URL: $questVrHttpsUrl"
+                    $env:VITE_API_BASE = $questVrHttpsUrl
+                    $env:VITE_GRAPHXR_VIEWER_URL = "$questVrHttpsUrl/viewer"
+                    Write-Host '  Vite session env updated for Quest (overrides .env for this run).'
+                }
+            }
+            elseif (-not $questVrHttpsUrl) {
+                # ngrok window may show ERR_NGROK_334 while an old tunnel is still registered — try once more.
+                $questVrHttpsUrl = Get-NgrokHttpsUrlForPort -Port $vrProxyPort
+                if ($questVrHttpsUrl) {
+                    Write-Host "  Recovered ngrok HTTPS URL from local agent: $questVrHttpsUrl"
+                    $env:VITE_API_BASE = $questVrHttpsUrl
+                    $env:VITE_GRAPHXR_VIEWER_URL = "$questVrHttpsUrl/viewer"
+                }
+                else {
+                    Write-Warning 'Could not read ngrok HTTPS URL from http://127.0.0.1:4040/api/tunnels. Check the ngrok window.'
+                    Write-Warning 'If ngrok reports ERR_NGROK_334, close the old ngrok window or run: Get-Process ngrok | Stop-Process -Force'
+                }
+            }
+        }
+        catch {
+            Write-Warning ("Quest VR setup failed: $_")
+            Write-Warning 'Continuing with normal local dev URLs only.'
+        }
+    }
+
     Write-Host '[4] Starting Vite on 0.0.0.0:5173 - laptop: http://127.0.0.1:5173'
-    Write-Host '    Same WiFi iPad or phone: http://YOUR_LAN_IP:5173 - run ipconfig to find IPv4'
-    Write-Host '    GraphXR viewer:' $env:VITE_GRAPHXR_VIEWER_URL
-    Write-Host '    Optional .env: VITE_API_BASE=http://YOUR_LAN_IP:8787 if you bypass the Vite proxy.'
+    if ($QuestVR) {
+        Write-QuestVrInstructions -QuestHttpsUrl $questVrHttpsUrl -LanIp $lanIp -ProxyPort $vrProxyPort
+    }
+    else {
+        if ($lanIp) {
+            Write-Host ("    Same WiFi iPad or phone: http://${lanIp}:5173")
+            Write-Host ("    Atlas voice remote: http://${lanIp}:5173/atlas-remote")
+        }
+        else {
+            Write-Host '    Same WiFi iPad or phone: http://YOUR_LAN_IP:5173 - run ipconfig to find IPv4'
+            Write-Host '    Atlas voice remote: http://YOUR_LAN_IP:5173/atlas-remote'
+        }
+        Write-Host '    GraphXR viewer:' $env:VITE_GRAPHXR_VIEWER_URL
+        Write-Host '    Optional .env: VITE_API_BASE=http://YOUR_LAN_IP:8787 if you bypass the Vite proxy.'
+        Write-Host '    Meta Quest WebXR: run with -QuestVR for HTTPS proxy + ngrok.'
+    }
     Write-Host '    Logs: Get-Content logs\activity_compact.log -Wait  (readable)  |  logs\activity.log  (full)  |  logs\health.log'
     Write-Host '    Press Ctrl+C here to stop the dev server; background Python/Node processes will be stopped.'
     $frontendDir = Join-Path $Root "frontend"
@@ -589,6 +939,15 @@ try {
 finally {
     $env:PYTHONPATH = $savedPythonPath
     Set-Location $Root
+    if ($QuestVR) {
+        if ($ngrokProc -and -not $ngrokProc.HasExited) {
+            Stop-Process -Id $ngrokProc.Id -Force -ErrorAction SilentlyContinue
+        }
+        if ($vrProxyProc -and -not $vrProxyProc.HasExited) {
+            Stop-Process -Id $vrProxyProc.Id -Force -ErrorAction SilentlyContinue
+        }
+        Stop-StaleVrProxyProcesses -Port $vrProxyPort
+    }
     if ($graphxrProc -and -not $graphxrProc.HasExited) {
         Stop-Process -Id $graphxrProc.Id -Force -ErrorAction SilentlyContinue
     }
@@ -597,9 +956,6 @@ finally {
     }
     if ($bff -and -not $bff.HasExited) {
         Stop-Process -Id $bff.Id -Force -ErrorAction SilentlyContinue
-    }
-    if ($atlasWakeProc -and -not $atlasWakeProc.HasExited) {
-        Stop-Process -Id $atlasWakeProc.Id -Force -ErrorAction SilentlyContinue
     }
     if ($atlasApiProc -and -not $atlasApiProc.HasExited) {
         Stop-Process -Id $atlasApiProc.Id -Force -ErrorAction SilentlyContinue

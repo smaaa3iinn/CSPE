@@ -1,19 +1,38 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchAtlasUi, postAtlasInputMode } from "../api/client";
-import { useAtlasTextChat } from "../hooks/useAtlasTextChat";
+import { useAtlasTextChat, type AtlasTextChatOptions } from "../hooks/useAtlasTextChat";
 import { useAppStore } from "../store";
 import { TransportExplorationPanel } from "./TransportExplorationPanel";
 import "../modes/transport.css";
 import "./atlasRail.css";
 
+export type AtlasRailPanelProps = {
+  /** Overlay on transport map (default) or fixed sidebar (VR viewer). */
+  layout?: "float" | "sidebar";
+  commandContext?: AtlasTextChatOptions["commandContext"];
+  onCommandsApplied?: AtlasTextChatOptions["onCommandsApplied"];
+  hint?: string;
+};
+
+const DEFAULT_HINT =
+  "Hold uses your mic via the Atlas voice session; text chat works when you are not holding. Press F for full-map view.";
+
 /**
  * Persistent right-rail Atlas: text thread + hold-to-talk voice (syncs with /api/atlas/*).
  */
-export function AtlasRailPanel() {
+export function AtlasRailPanel({
+  layout = "float",
+  commandContext,
+  onCommandsApplied,
+  hint = DEFAULT_HINT,
+}: AtlasRailPanelProps = {}) {
   const history = useAppStore((s) => s.chatHistory);
   const syncVoiceUi = useAppStore((s) => s.syncAtlasVoiceUi);
   const loading = useAppStore((s) => s.chatLoading);
-  const { draft, setDraft, send, localErr: textErr, inputDisabled } = useAtlasTextChat();
+  const { draft, setDraft, send, localErr: textErr, inputDisabled } = useAtlasTextChat({
+    commandContext,
+    onCommandsApplied,
+  });
 
   const [localErr, setLocalErr] = useState<string | null>(null);
   const [modeBusy, setModeBusy] = useState(false);
@@ -103,8 +122,13 @@ export function AtlasRailPanel() {
 
   const chatErr = localErr || textErr;
 
+  const rootClass =
+    layout === "sidebar"
+      ? "atlas-rail atlas-rail--sidebar"
+      : "transport-float transport-float--br atlas-rail";
+
   return (
-    <div className="transport-float transport-float--br atlas-rail" aria-label="Atlas">
+    <div className={rootClass} aria-label="Atlas">
       <div className="atlas-rail__head">Atlas</div>
       <div ref={scrollRef} className="atlas-rail__scroll">
         {history.length === 0 && !loading && <p className="muted" style={{ margin: 0, fontSize: 12 }}>Message Atlas below.</p>}
@@ -182,7 +206,7 @@ export function AtlasRailPanel() {
         >
           {holding ? "Listening… (release to stop)" : "Hold to talk"}
         </button>
-        <p className="atlas-rail__hint">Hold uses your mic via the Atlas voice session; text chat works when you are not holding. Press F for full-map view.</p>
+        <p className="atlas-rail__hint">{hint}</p>
       </div>
     </div>
   );

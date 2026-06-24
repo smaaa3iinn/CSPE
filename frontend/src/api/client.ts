@@ -25,6 +25,15 @@ export async function fetchAtlasUi(): Promise<{
 export async function postChat(message: string): Promise<{
   structured_outputs: StructuredOutput[];
   error: string | null;
+  ui_commands: {
+    command_id: string;
+    commands: unknown[];
+    target?: "active_display" | "2d" | "vr_dev" | "vr_real";
+    session_id?: string | null;
+    source?: string;
+    created_at?: string | null;
+  } | null;
+  ui_sync: "inline" | "queued" | "none";
 }> {
   const r = await fetch(apiUrl("/api/chat"), {
     method: "POST",
@@ -32,10 +41,24 @@ export async function postChat(message: string): Promise<{
     body: JSON.stringify({ message }),
   });
   if (!r.ok) throw new Error(`chat ${r.status}`);
-  const data = (await r.json()) as { structured_outputs?: unknown[]; error?: string | null };
+  const data = (await r.json()) as {
+    structured_outputs?: unknown[];
+    error?: string | null;
+    ui_commands?: {
+      command_id: string;
+      commands: unknown[];
+      target?: "active_display" | "2d" | "vr_dev" | "vr_real";
+      session_id?: string | null;
+      source?: string;
+      created_at?: string | null;
+    } | null;
+    ui_sync?: "inline" | "queued" | "none";
+  };
   return {
     structured_outputs: (data.structured_outputs ?? []) as StructuredOutput[],
     error: data.error ?? null,
+    ui_commands: data.ui_commands ?? null,
+    ui_sync: data.ui_sync ?? "none",
   };
 }
 

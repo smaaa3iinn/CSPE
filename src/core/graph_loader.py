@@ -773,6 +773,35 @@ def build_graph(
     return G
 
 
+def _filter_edges_excluding_mode(edges_clean: pd.DataFrame, exclude_mode: str) -> pd.DataFrame:
+    """Keep non-bus rides plus transfers between remaining nodes."""
+    if edges_clean.empty:
+        return edges_clean.copy()
+
+    exclude = str(exclude_mode or "").strip().lower()
+    if not exclude:
+        return edges_clean.copy()
+
+    exclude_pattern = rf"(?:^|\|){re.escape(exclude)}(?:\||$)"
+    ride_mask = edges_clean["edge_kind"] == "ride"
+    mode_col = edges_clean["mode"].fillna("").astype(str).str.strip().str.lower()
+    modes_col = edges_clean["modes"].fillna("").astype(str).str.lower()
+    excluded_ride = ride_mask & (
+        mode_col.eq(exclude) | modes_col.str.contains(exclude_pattern, regex=True, na=False)
+    )
+    kept_rides = edges_clean[ride_mask & ~excluded_ride].copy()
+    if kept_rides.empty:
+        return kept_rides
+
+    allowed_nodes = set(kept_rides["a"]).union(set(kept_rides["b"]))
+    transfer_mask = (
+        (edges_clean["edge_kind"] == "transfer")
+        & edges_clean["a"].isin(allowed_nodes)
+        & edges_clean["b"].isin(allowed_nodes)
+    )
+    return pd.concat([kept_rides, edges_clean[transfer_mask].copy()], ignore_index=True)
+
+
 def largest_component(G: nx.Graph) -> nx.Graph:
     if G.number_of_nodes() == 0:
         return G
@@ -783,6 +812,11 @@ def largest_component(G: nx.Graph) -> nx.Graph:
 def build_graphs_by_mode(edges_clean: pd.DataFrame, pos_all: pd.DataFrame | None = None):
     modes = ["bus", "metro", "rail", "tram", "other"]
     graphs = {"all": build_graph(edges_clean, pos_all=pos_all, mode=None)}
+    graphs["all_mb"] = build_graph(
+        _filter_edges_excluding_mode(edges_clean, "bus"),
+        pos_all=pos_all,
+        mode=None,
+    )
     for m in modes:
         graphs[m] = build_graph(edges_clean, pos_all=pos_all, mode=m)
 
@@ -799,6 +833,12 @@ def build_graphs_by_mode_with_lines(
     stop_lines = build_stop_lines(data)
     modes = ["bus", "metro", "rail", "tram", "other"]
     graphs = {"all": build_graph(edges_clean, pos_all=pos_all, mode=None, stop_lines=stop_lines)}
+    graphs["all_mb"] = build_graph(
+        _filter_edges_excluding_mode(edges_clean, "bus"),
+        pos_all=pos_all,
+        mode=None,
+        stop_lines=stop_lines,
+    )
     for m in modes:
         graphs[m] = build_graph(edges_clean, pos_all=pos_all, mode=m, stop_lines=stop_lines)
 

@@ -1,6 +1,6 @@
 /** Shell command `atlas_transport_action` — partial UI patch + optional trigger (omit = preserve). */
 
-export type TransportGraphModeKey = "all" | "metro" | "rail" | "tram" | "bus" | "other";
+export type TransportGraphModeKey = "all" | "all_mb" | "metro" | "rail" | "tram" | "bus" | "other";
 
 export type AtlasTransportRun =
   | "route"
@@ -66,7 +66,7 @@ export function transportActionSpecFingerprint(spec: AtlasTransportActionSpec): 
   return JSON.stringify(normalized);
 }
 
-const GM: TransportGraphModeKey[] = ["all", "metro", "rail", "tram", "bus", "other"];
+const GM: TransportGraphModeKey[] = ["all", "all_mb", "metro", "rail", "tram", "bus", "other"];
 
 /** Build a spec from loosely-typed shell JSON; unknown keys ignored. */
 export function normalizeAtlasTransportSpec(raw: Record<string, unknown>): AtlasTransportActionSpec {

@@ -317,7 +317,7 @@ def log_http_line(
 
     p = (path or "").split("?", 1)[0].rstrip("/") or "/"
     dedupe_key = f"http:{component}:{method}:{p}:{status}"
-    if p in ("/api/transport/map", "/wake", "/mode") and method.upper() in ("POST", "GET"):
+    if p in ("/api/transport/map", "/mode") and method.upper() in ("POST", "GET"):
         if _dedupe_key(dedupe_key, 1.5):
             return
 

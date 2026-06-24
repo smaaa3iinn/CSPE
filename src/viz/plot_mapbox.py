@@ -389,11 +389,18 @@ def load_render_graph(json_path: str) -> dict[str, Any]:
     }
 
 
-def _merged_render_graph(render_graphs_by_mode: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+def _merged_render_graph(
+    render_graphs_by_mode: dict[str, dict[str, Any]],
+    *,
+    exclude_modes: tuple[str, ...] = (),
+) -> dict[str, Any] | None:
     nodes_by_id: dict[str, dict[str, Any]] = {}
     links_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+    excluded = {str(m).strip().lower() for m in exclude_modes if str(m).strip()}
 
     for mode in ("bus", "tram", "metro", "rail"):
+        if mode in excluded:
+            continue
         render_graph = render_graphs_by_mode.get(mode)
         if not render_graph:
             continue
@@ -468,6 +475,8 @@ def _active_render_graph_for_mode(
         return active
     if current_mode == "all":
         return _merged_render_graph(render_graphs_by_mode)
+    if current_mode == "all_mb":
+        return _merged_render_graph(render_graphs_by_mode, exclude_modes=("bus",))
     return None
 
 
@@ -1297,7 +1306,12 @@ def _network_layer_groups(
     if not line_geometries:
         return []
 
-    trace_modes = ("bus", "tram", "metro", "rail", "other") if current_mode == "all" else (current_mode,)
+    if current_mode == "all":
+        trace_modes = ("bus", "tram", "metro", "rail", "other")
+    elif current_mode == "all_mb":
+        trace_modes = ("tram", "metro", "rail", "other")
+    else:
+        trace_modes = (current_mode,)
     groups: list[dict[str, Any]] = []
 
     for mode in trace_modes:
@@ -1472,9 +1486,20 @@ def _path_geometry_segments(
                 }
             )
         else:
-            candidate_modes = [current_mode] if current_mode != "all" else [
-                mode for mode in _split_modes(str(data.get("modes") or data.get("mode") or "")) if mode != "transfer"
-            ]
+            if current_mode == "all":
+                candidate_modes = [
+                    mode
+                    for mode in _split_modes(str(data.get("modes") or data.get("mode") or ""))
+                    if mode != "transfer"
+                ]
+            elif current_mode == "all_mb":
+                candidate_modes = [
+                    mode
+                    for mode in _split_modes(str(data.get("modes") or data.get("mode") or ""))
+                    if mode not in ("transfer", "bus")
+                ]
+            else:
+                candidate_modes = [current_mode]
             if not candidate_modes:
                 candidate_modes = [str(data.get("mode") or "other")]
 

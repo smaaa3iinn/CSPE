@@ -14,7 +14,7 @@ from backend.product_shell import transport_engine as te
 from backend.product_shell.services import agent_store
 from backend.product_shell.services.agent_tools import resolve_stop_query
 
-GraphMode = Literal["all", "metro", "rail", "tram", "bus", "other"]
+GraphMode = Literal["all", "all_mb", "metro", "rail", "tram", "bus", "other"]
 
 DEFAULT_POI_RADIUS_M = 500
 DEFAULT_STOP_RADIUS_M = 1000
@@ -26,7 +26,7 @@ MAX_STOP_LIMIT = 50
 DEFAULT_POI_LIMIT = 30
 MAX_POI_LIMIT = 60
 
-VALID_MODES = frozenset({"all", "metro", "rail", "tram", "bus", "other"})
+VALID_MODES = frozenset({"all", "all_mb", "metro", "rail", "tram", "bus", "other"})
 VALID_POI_CATEGORIES = frozenset(
     {
         "restaurant",
@@ -86,7 +86,9 @@ def clamp_limit(value: int | None, *, default: int, maximum: int) -> int:
 
 
 def normalize_mode(mode: str | None, *, default: GraphMode = "all") -> GraphMode:
-    m = str(mode or default).strip().lower()
+    m = str(mode or default).strip().lower().replace("-", "_")
+    if m in {"allmb", "all_minus_bus"}:
+        m = "all_mb"
     return m if m in VALID_MODES else default  # type: ignore[return-value]
 
 

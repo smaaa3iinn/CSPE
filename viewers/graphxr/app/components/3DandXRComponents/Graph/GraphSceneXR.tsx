@@ -15,7 +15,8 @@ import {
     MeshBuilder,
     StandardMaterial,
     WebXRMotionControllerManager,
-    WebXRFeatureName
+    WebXRFeatureName,
+    Scalar,
 } from '@babylonjs/core';
 import '@babylonjs/core/XR/motionController/webXROculusTouchMotionController'; // Local Oculus Touch controller
 import '@babylonjs/loaders'; // Required for glTF controller models
@@ -24,9 +25,10 @@ import * as GUI from '@babylonjs/gui';
 import SceneComponent from '@/app/components/3DandXRComponents/Scene/SceneComponent';
 import { useVRMenu } from '../hooks/useVRMenu';
 import { VRDetailsPanel } from '../components/VRDetailsPanel';
+import { VRRoutePanel } from '../components/VRRoutePanel';
 import { VRFilterPanel } from '../components/VRFilterPanel';
 import { GraphRenderer } from '../utils/GraphRenderer';
-import { setupCommonScene } from '../utils/SceneSetup';
+import { setupCommonScene, fitArcRotateCameraToGraph, updateArcRotateCameraClipPlanes } from '../utils/SceneSetup';
 
 interface GraphData {
     nodes: Array<{
@@ -44,6 +46,12 @@ interface GraphData {
         weight?: number;
         [key: string]: any;
     }>;
+    metadata?: {
+        route_legs?: Array<{ kind?: string; color?: string; summary?: string }>;
+        route_meta?: string;
+        has_route?: boolean;
+        [key: string]: unknown;
+    };
 }
 
 interface GraphSceneProps {
@@ -74,10 +82,36 @@ const GraphSceneXR = forwardRef<GraphSceneRef, GraphSceneProps>(({ data, onSelec
     const [isSceneReady, setIsSceneReady] = useState(false);
     const xrHelperRef = useRef<any>(null);
     const detailsPanelRef = useRef(new VRDetailsPanel());
+    const routePanelRef = useRef(new VRRoutePanel());
     const filterPanelRef = useRef(new VRFilterPanel());
     const nodeMeshesRef = useRef<Map<string, Mesh | InstancedMesh>>(new Map());
     const graphRenderer = useRef(new GraphRenderer());
     const vrMenuRef = useRef<{ dispose: () => void } | null>(null);
+    const dataRef = useRef(data);
+    dataRef.current = data;
+    const onSelectRef = useRef(onSelect);
+    onSelectRef.current = onSelect;
+    const initialCameraFitDoneRef = useRef(false);
+
+    const invokeSelect = useCallback((item: any, type: 'node' | 'edge' | null) => {
+        onSelectRef.current?.(item, type);
+    }, []);
+
+    const fitPreviewCamera = useCallback((sceneInstance: Scene | null, force = false) => {
+        if (!sceneInstance || xrHelperRef.current?.baseExperience?.state === WebXRState.IN_XR) {
+            return;
+        }
+        const camera = sceneInstance.getCameraByName("camera") as ArcRotateCamera;
+        if (!camera) {
+            return;
+        }
+        if (force || !initialCameraFitDoneRef.current) {
+            fitArcRotateCameraToGraph(camera, dataRef.current.nodes ?? []);
+            initialCameraFitDoneRef.current = true;
+        } else {
+            updateArcRotateCameraClipPlanes(camera, dataRef.current.nodes ?? []);
+        }
+    }, []);
 
     const handleLayoutRequest = useCallback(async (algorithm: string) => {
         console.info("Layout changes from the VR menu are handled from the desktop overlay.", algorithm);
@@ -88,14 +122,8 @@ const GraphSceneXR = forwardRef<GraphSceneRef, GraphSceneProps>(({ data, onSelec
         resetCamera: () => {
             if (xrHelperRef.current && xrHelperRef.current.baseExperience) {
                 xrHelperRef.current.baseExperience.camera.position.set(0, 0, 0);
-            } else if (scene) {
-                const camera = scene.getCameraByName("camera") as ArcRotateCamera;
-                if (camera) {
-                    camera.setTarget(Vector3.Zero());
-                    camera.alpha = -Math.PI / 2;
-                    camera.beta = Math.PI / 2.5;
-                    camera.radius = 100;
-                }
+            } else {
+                fitPreviewCamera(scene, true);
             }
         },
         getCameraState: () => {
@@ -148,10 +176,22 @@ const GraphSceneXR = forwardRef<GraphSceneRef, GraphSceneProps>(({ data, onSelec
         }
     }, [scene, data, handleLocalFilterChange]);
 
-    const vrUtilsRef = useRef({ createVRMenu, handleLayoutRequest, onXRStateChange, onResetFilters: handleLocalResetFilters, onToggleLabels, onOpenFilters: handleLocalOpenFilters });
+    const syncRoutePanel = useCallback(() => {
+        if (!scene) return;
+        const meta = dataRef.current?.metadata;
+        const legs = meta?.route_legs;
+        const routeMeta = meta?.route_meta;
+        const inXr = xrHelperRef.current?.baseExperience?.state === WebXRState.IN_XR;
+        const anchor = inXr
+            ? xrHelperRef.current?.baseExperience?.camera
+            : scene.getCameraByName('camera');
+        routePanelRef.current.sync(scene, anchor ?? null, legs, routeMeta);
+    }, [scene]);
+
+    const vrUtilsRef = useRef({ createVRMenu, handleLayoutRequest, onXRStateChange, onResetFilters: handleLocalResetFilters, onToggleLabels, onOpenFilters: handleLocalOpenFilters, syncRoutePanel });
     useEffect(() => {
-        vrUtilsRef.current = { createVRMenu, handleLayoutRequest, onXRStateChange, onResetFilters: handleLocalResetFilters, onToggleLabels, onOpenFilters: handleLocalOpenFilters };
-    }, [createVRMenu, handleLayoutRequest, onXRStateChange, handleLocalResetFilters, onToggleLabels, handleLocalOpenFilters]);
+        vrUtilsRef.current = { createVRMenu, handleLayoutRequest, onXRStateChange, onResetFilters: handleLocalResetFilters, onToggleLabels, onOpenFilters: handleLocalOpenFilters, syncRoutePanel };
+    }, [createVRMenu, handleLayoutRequest, onXRStateChange, handleLocalResetFilters, onToggleLabels, handleLocalOpenFilters, syncRoutePanel]);
 
     // Handle visibility updates (Nodes/Edges)
     useEffect(() => {
@@ -187,8 +227,7 @@ const GraphSceneXR = forwardRef<GraphSceneRef, GraphSceneProps>(({ data, onSelec
         camera.wheelPrecision = 10;
         camera.pinchPrecision = 10;
         camera.panningSensibility = 20;
-        camera.lowerRadiusLimit = 0.1;
-        camera.upperRadiusLimit = 10000;
+        camera.wheelDeltaPercentage = 0.05;
 
         // Prevent page zoom
         if (canvas) {
@@ -255,8 +294,68 @@ const GraphSceneXR = forwardRef<GraphSceneRef, GraphSceneProps>(({ data, onSelec
 
             // 3. Setup Locomotion (Free Fly)
             const featuresManager = xr.baseExperience.featuresManager;
+            const PITCH_SPEED = 0.5;
+            const PITCH_THRESHOLD = 0.05;
+            const MIN_PITCH = -Math.PI / 2 + 0.12;
+            const MAX_PITCH = Math.PI / 2 - 0.12;
+            let pitchRenderObserver: { remove: () => void } | null = null;
+
+            const getLeftThumbstickY = (): number => {
+                for (const controller of xr.input.controllers) {
+                    if (controller.inputSource?.handedness !== 'left') {
+                        continue;
+                    }
+                    const motionController = controller.motionController;
+                    if (!motionController) {
+                        continue;
+                    }
+                    for (const componentId of motionController.getComponentIds()) {
+                        const component = motionController.getComponent(componentId);
+                        if (component?.type !== 'thumbstick' || !component.axes) {
+                            continue;
+                        }
+                        const y = component.axes.y ?? 0;
+                        return Math.abs(y) > PITCH_THRESHOLD ? y : 0;
+                    }
+                }
+                return 0;
+            };
+
+            const enablePitchLook = () => {
+                if (pitchRenderObserver) {
+                    return;
+                }
+                pitchRenderObserver = sceneInstance.onBeforeRenderObservable.add(() => {
+                    if (xr.baseExperience.state !== WebXRState.IN_XR) {
+                        return;
+                    }
+                    const pitchAxis = getLeftThumbstickY();
+                    if (pitchAxis === 0) {
+                        return;
+                    }
+                    const xrCamera = xr.input.xrCamera;
+                    if (!xrCamera) {
+                        return;
+                    }
+                    const deltaMillis = sceneInstance.getEngine().getDeltaTime();
+                    const handednessSign = sceneInstance.useRightHandedSystem ? -1 : 1;
+                    const pitchDelta =
+                        deltaMillis * 0.001 * PITCH_SPEED * pitchAxis * handednessSign;
+                    xrCamera.cameraRotation.x = Scalar.Clamp(
+                        xrCamera.cameraRotation.x + pitchDelta,
+                        MIN_PITCH,
+                        MAX_PITCH,
+                    );
+                });
+            };
+
+            const disablePitchLook = () => {
+                pitchRenderObserver?.remove();
+                pitchRenderObserver = null;
+            };
+
             try {
-                const locomotion = featuresManager.enableFeature(
+                featuresManager.enableFeature(
                     WebXRFeatureName.MOVEMENT,
                     'latest',
                     {
@@ -267,7 +366,8 @@ const GraphSceneXR = forwardRef<GraphSceneRef, GraphSceneProps>(({ data, onSelec
                         rotationSpeed: 0.5,
                         movementEnabled: true,
                         rotationEnabled: true, // Smooth rotation
-                        movementThreshold: 0.05
+                        movementThreshold: 0.05,
+                        rotationThreshold: 0.05,
                     }
                 );
                 console.log('[VR] Free Fly Locomotion enabled');
@@ -364,8 +464,8 @@ const GraphSceneXR = forwardRef<GraphSceneRef, GraphSceneProps>(({ data, onSelec
 
                 const instructions = [
                     "Grip: Saisir Monde",
-                    "Sticks: Voler/Tourner",
-                    "A/X: Menu | Trigger: Select"
+                    "Gauche: Tourner + Haut/Bas",
+                    "Droit: Voler | A/X: Menu | Trigger: Select"
                 ];
 
                 instructions.forEach(line => {
@@ -383,11 +483,15 @@ const GraphSceneXR = forwardRef<GraphSceneRef, GraphSceneProps>(({ data, onSelec
                 if (state === WebXRState.IN_XR) {
                     console.log("VR Experience Started");
                     createVRHUD(); // Create HUD
+                    enablePitchLook();
+                    vrUtilsRef.current.syncRoutePanel();
                     if (vrUtilsRef.current.onXRStateChange) {
                         vrUtilsRef.current.onXRStateChange(true);
                     }
                 } else if (state === WebXRState.EXITING_XR) {
                     console.log("VR Experience Ending");
+
+                    disablePitchLook();
 
                     // Cleanup
                     if (hudTexture) {
@@ -397,6 +501,7 @@ const GraphSceneXR = forwardRef<GraphSceneRef, GraphSceneProps>(({ data, onSelec
                     const hud = sceneInstance.getMeshByName("VR_HUD");
                     if (hud) hud.dispose();
 
+                    vrUtilsRef.current.syncRoutePanel();
                     if (vrUtilsRef.current.onXRStateChange) {
                         vrUtilsRef.current.onXRStateChange(false);
                     }
@@ -412,6 +517,8 @@ const GraphSceneXR = forwardRef<GraphSceneRef, GraphSceneProps>(({ data, onSelec
 
     useEffect(() => {
         return () => {
+            initialCameraFitDoneRef.current = false;
+            routePanelRef.current.dispose();
             if (scene) {
                 graphRenderer.current.disposeGraph(nodeMeshesRef.current, scene);
             }
@@ -464,6 +571,7 @@ const GraphSceneXR = forwardRef<GraphSceneRef, GraphSceneProps>(({ data, onSelec
                 console.log("VR: Graph positions updated in place");
                 graphRenderer.current.updateVisibility(visibleNodeIds ?? null, visibleEdgeIds ?? null, nodeMeshesRef.current);
                 graphRenderer.current.updateLabelVisibility(!!showLabels, nodeMeshesRef.current, scene, true);
+                syncRoutePanel();
                 return; // Success - no need to recreate
             }
             console.log("VR: Graph structure changed, recreating...");
@@ -476,7 +584,7 @@ const GraphSceneXR = forwardRef<GraphSceneRef, GraphSceneProps>(({ data, onSelec
             data,
             scene,
             nodeMeshesRef.current,
-            onSelect,
+            invokeSelect,
             handleVRSelect,
             xrHelperRef,
             true // skip2DUI
@@ -485,15 +593,15 @@ const GraphSceneXR = forwardRef<GraphSceneRef, GraphSceneProps>(({ data, onSelec
             data,
             scene,
             nodeMeshesRef.current,
-            onSelect,
+            invokeSelect,
             handleVRSelect,
             xrHelperRef
         );
 
         graphRenderer.current.updateVisibility(visibleNodeIds ?? null, visibleEdgeIds ?? null, nodeMeshesRef.current);
         graphRenderer.current.updateLabelVisibility(!!showLabels, nodeMeshesRef.current, scene, true);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [scene, data, onSelect, visibleNodeIds, visibleEdgeIds]); // showLabels removed - handled by separate useEffect
+        syncRoutePanel();
+    }, [scene, data, invokeSelect, visibleNodeIds, visibleEdgeIds, showLabels, handleLocalResetFilters, fitPreviewCamera, syncRoutePanel]);
 
     return (
         <div className="h-full w-full overflow-hidden rounded-xl bg-black/20 relative" style={{ touchAction: 'none' }}>

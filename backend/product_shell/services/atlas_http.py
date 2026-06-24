@@ -40,7 +40,7 @@ def _panels_signature(panels: Any) -> str:
 
 
 def ensure_atlas_session_mode(mode: str = "text", *, wait_active_s: float = 45.0) -> tuple[bool, str]:
-    """Wake (if needed) and set Atlas input mode: \"text\" or \"voice\" (mic + realtime)."""
+    """Start Atlas session (if needed) and set input mode: \"text\" or \"voice\" (mic + realtime)."""
     m = (mode or "text").strip().lower()
     if m not in ("voice", "text"):
         m = "text"
@@ -52,23 +52,19 @@ def ensure_atlas_session_mode(mode: str = "text", *, wait_active_s: float = 45.0
         health = r.json()
         active = bool(health.get("session_active"))
 
-        if not active:
-            wr = requests.post(f"{base}/wake", json={"mode": m}, timeout=15)
-            if wr.status_code != 200:
-                return False, f"Atlas /wake failed: {wr.status_code} {wr.text[:200]}"
-
-        t0 = time.monotonic()
-        while time.monotonic() - t0 < wait_active_s:
-            r2 = requests.get(f"{base}/health", timeout=3)
-            if r2.status_code == 200 and r2.json().get("session_active"):
-                break
-            time.sleep(0.35)
-        else:
-            return False, "Atlas session did not become active in time (is the API running?)"
-
-        mr = requests.post(f"{base}/mode", json={"mode": m}, timeout=5)
+        mr = requests.post(f"{base}/mode", json={"mode": m}, timeout=15)
         if mr.status_code != 200:
-            return False, f"Atlas /mode failed: {mr.status_code}"
+            return False, f"Atlas /mode failed: {mr.status_code} {mr.text[:200]}"
+
+        if not active:
+            t0 = time.monotonic()
+            while time.monotonic() - t0 < wait_active_s:
+                r2 = requests.get(f"{base}/health", timeout=3)
+                if r2.status_code == 200 and r2.json().get("session_active"):
+                    break
+                time.sleep(0.35)
+            else:
+                return False, "Atlas session did not become active in time (is the API running?)"
 
         return True, ""
     except requests.exceptions.RequestException as e:

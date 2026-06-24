@@ -6,19 +6,34 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+TransportGraphMode = Literal["all", "all_mb", "metro", "rail", "tram", "bus", "other"]
+
 
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
+
+
+class UiCommandBatch(BaseModel):
+    """Structured UI commands produced during one Atlas chat turn (mirrors shell queue payload)."""
+
+    command_id: str = Field(..., min_length=1)
+    commands: list[dict[str, Any]] = Field(default_factory=list)
+    session_id: str | None = None
+    target: Literal["active_display", "2d", "vr_dev", "vr_real"] = "active_display"
+    source: Literal["atlas_chat", "atlas_voice", "shell_poll", "shell_sse", "manual_ui"] = "atlas_chat"
+    created_at: str | None = None
 
 
 class ChatResponse(BaseModel):
     structured_outputs: list[dict[str, Any]]
     raw_ui: dict[str, Any] | None = None
     error: str | None = None
+    ui_commands: UiCommandBatch | None = None
+    ui_sync: Literal["inline", "queued", "none"] = "none"
 
 
 class TransportMapRequest(BaseModel):
-    mode: Literal["all", "metro", "rail", "tram", "bus", "other"] = "metro"
+    mode: TransportGraphMode = "all_mb"
     use_lcc: bool = True
     viz_mode: Literal["geographic", "network_3d"] = "geographic"
     path_stop_ids: list[str] | None = None
@@ -62,7 +77,7 @@ class TransportRouteOverlayResponse(BaseModel):
 class TransportRouteRequest(BaseModel):
     """Either stop endpoints (from_stop_id + to_stop_id) or station endpoints (from_station_id + to_station_id)."""
 
-    mode: Literal["all", "metro", "rail", "tram", "bus", "other"] = "metro"
+    mode: TransportGraphMode = "all_mb"
     use_lcc: bool = True
     from_stop_id: str | None = None
     to_stop_id: str | None = None
@@ -84,13 +99,15 @@ class TransportRouteResponse(BaseModel):
 
 
 class TransportGraph3DSessionRequest(BaseModel):
-    mode: Literal["all", "metro", "rail", "tram", "bus", "other"] = "metro"
+    mode: TransportGraphMode = "all_mb"
     use_lcc: bool = True
     graph_viz_mode: Literal["stop", "station", "hybrid"] = "stop"
     path_stop_ids: list[str] | None = None
     path_station_ids: list[str] | None = None
     selected_stop_id: str | None = None
     selected_station_id: str | None = None
+    route_legs: list[dict[str, Any]] | None = None
+    route_meta: str | None = None
 
 
 class TransportGraph3DSessionResponse(BaseModel):
@@ -127,6 +144,7 @@ class TransportStatsResponse(BaseModel):
 class AgentContextPatch(BaseModel):
     ui_mode: Literal["transport"] | None = None
     transport: dict[str, Any] | None = None
+    ux: dict[str, Any] | None = None
 
 
 class AgentEventBody(BaseModel):
@@ -138,7 +156,7 @@ class AgentEventBody(BaseModel):
 class AgentTransportRouteRequest(BaseModel):
     from_query: str = Field(..., min_length=1)
     to_query: str = Field(..., min_length=1)
-    mode: Literal["all", "metro", "rail", "tram", "bus", "other"] = "metro"
+    mode: TransportGraphMode = "all_mb"
     use_lcc: bool = True
     routing_scope: Literal["stop", "station"] = "station"
     station_first: bool = True
@@ -161,7 +179,7 @@ class AgentPlaceLookupRequest(BaseModel):
     near_query: str | None = None
     topic: Literal["about", "history", "hours", "accessibility", "disruptions", "reviews"] | None = "about"
     includes_today: bool = False
-    mode: Literal["all", "metro", "rail", "tram", "bus", "other"] = "metro"
+    mode: TransportGraphMode = "all_mb"
     use_lcc: bool = True
     station_first: bool = True
 
@@ -192,7 +210,7 @@ class TransportExploreAreaRequest(BaseModel):
     transport_modes: list[str] = Field(default_factory=lambda: ["all"])
     limit_stops: int = Field(default=15, ge=1, le=50)
     limit_pois: int = Field(default=20, ge=1, le=60)
-    mode: Literal["all", "metro", "rail", "tram", "bus", "other"] = "metro"
+    mode: TransportGraphMode = "all_mb"
     use_lcc: bool = False
     station_first: bool = True
     sync_ui: bool = True

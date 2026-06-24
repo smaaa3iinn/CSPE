@@ -9,8 +9,68 @@ from src.core.queries import normalize_text, _score_name_match
 from backend.product_shell import transport_engine as te
 from backend.product_shell.services import agent_store
 
-GraphMode = Literal["all", "metro", "rail", "tram", "bus", "other"]
+GraphMode = Literal["all", "all_mb", "metro", "rail", "tram", "bus", "other"]
 RoutingScope = Literal["stop", "station"]
+ResolveStatus = Literal["exact", "ambiguous", "none"]
+
+
+def _looks_like_opaque_station_id(raw: str) -> bool:
+    s = (raw or "").strip()
+    if not s:
+        return False
+    if s.startswith("st:"):
+        return True
+    if " " in s:
+        return False
+    return ":" in s and len(s) >= 8
+
+
+def _looks_like_opaque_stop_id(raw: str) -> bool:
+    s = (raw or "").strip()
+    if not s or " " in s:
+        return False
+    return ":" in s and len(s) >= 4
+
+
+def _resolve_endpoint_from_matches(
+    query: str,
+    matches: list[dict[str, Any]],
+    *,
+    station_first: bool,
+) -> tuple[ResolveStatus, dict[str, Any] | None]:
+    """Match manual UI / atlasTransportResolve: one distinct id wins, several → ambiguous."""
+    q = (query or "").strip()
+    if not q:
+        return "none", None
+
+    if station_first:
+        by_station: dict[str, dict[str, Any]] = {}
+        for row in matches:
+            sid = (row.get("station_id") or "").strip()
+            if sid and sid not in by_station:
+                by_station[sid] = row
+        station_ids = list(by_station.keys())
+        if len(station_ids) == 1:
+            return "exact", by_station[station_ids[0]]
+        if len(station_ids) > 1:
+            return "ambiguous", None
+        if _looks_like_opaque_station_id(q):
+            return "exact", {"station_id": q, "station_name": q, "stop_name": q}
+        return "none", None
+
+    by_stop: dict[str, dict[str, Any]] = {}
+    for row in matches:
+        stop_id = (row.get("stop_id") or "").strip()
+        if stop_id and stop_id not in by_stop:
+            by_stop[stop_id] = row
+    stop_ids = list(by_stop.keys())
+    if len(stop_ids) == 1:
+        return "exact", by_stop[stop_ids[0]]
+    if len(stop_ids) > 1:
+        return "ambiguous", None
+    if _looks_like_opaque_stop_id(q):
+        return "exact", {"stop_id": q, "stop_name": q}
+    return "none", None
 
 
 def _pick_best_match(matches: list[dict[str, Any]], query: str = "") -> dict[str, Any] | None:
@@ -38,57 +98,52 @@ def resolve_stop_query(
     use_lcc: bool = True,
     station_first: bool = True,
     limit: int = 15,
+    auto_pick: bool = False,
 ) -> dict[str, Any]:
     q = (query or "").strip()
     if not q:
         return {"status": "error", "error": "empty query", "matches": []}
 
-    modes_to_try: list[GraphMode] = [mode]
-    if mode != "all":
-        modes_to_try.append("all")
-
     matches: list[dict[str, Any]] = []
     effective_mode: GraphMode = mode
     effective_use_lcc = use_lcc
 
-    for search_mode in modes_to_try:
-        lcc_candidates = [True, False] if use_lcc else [False]
-        for lcc in lcc_candidates:
-            matches = te.search_stops(
-                q,
-                limit=limit,
-                mode=search_mode,
-                use_lcc=lcc,
-                station_first=station_first,
-                fallback_lcc=False,
-                mode_fallback=False,
-            )
-            if matches:
-                effective_mode = search_mode
-                effective_use_lcc = lcc
-                break
+    lcc_candidates = [True, False] if use_lcc else [False]
+    for lcc in lcc_candidates:
+        matches = te.search_stops(
+            q,
+            limit=limit,
+            mode=mode,
+            use_lcc=lcc,
+            station_first=station_first,
+            fallback_lcc=False,
+            mode_fallback=False,
+        )
         if matches:
+            effective_use_lcc = lcc
             break
 
-    best = _pick_best_match(matches, q)
-    if best:
-        return {
-            "status": "exact",
-            "query": q,
-            "match": best,
-            "matches": matches,
-            "use_lcc": effective_use_lcc,
-            "mode": effective_mode,
-        }
-    if matches:
-        return {
-            "status": "ambiguous",
-            "query": q,
-            "matches": matches[:8],
-            "use_lcc": effective_use_lcc,
-            "mode": effective_mode,
-        }
-    return {"status": "none", "query": q, "matches": [], "use_lcc": effective_use_lcc, "mode": mode}
+    base = {
+        "query": q,
+        "matches": matches,
+        "use_lcc": effective_use_lcc,
+        "mode": effective_mode,
+    }
+
+    if auto_pick:
+        best = _pick_best_match(matches, q)
+        if best:
+            return {**base, "status": "exact", "match": best}
+        if matches:
+            return {**base, "status": "ambiguous", "matches": matches[:8]}
+        return {**base, "status": "none", "matches": []}
+
+    status, match = _resolve_endpoint_from_matches(q, matches, station_first=station_first)
+    if status == "exact" and match:
+        return {**base, "status": "exact", "match": match}
+    if status == "ambiguous":
+        return {**base, "status": "ambiguous", "matches": matches[:8]}
+    return {**base, "status": "none", "matches": []}
 
 
 def _endpoint_ids(
@@ -107,6 +162,51 @@ def _endpoint_ids(
     return stop_id, None, label
 
 
+def _format_search_candidate(row: dict[str, Any]) -> str:
+    name = (
+        row.get("station_name")
+        or row.get("stop_name")
+        or row.get("station_id")
+        or row.get("stop_id")
+        or "?"
+    )
+    name = str(name).strip()
+    line = row.get("line")
+    if line:
+        line_s = str(line).strip()
+        if "," in line_s:
+            return f"{name} — lines {line_s}"
+        return f"{name} — L{line_s}"
+    return name
+
+
+def _format_numbered_search_candidates(
+    candidates: list[dict[str, Any]],
+    *,
+    station_first: bool = True,
+    max_items: int = 8,
+) -> list[str]:
+    seen: set[str] = set()
+    labels: list[str] = []
+    for row in candidates:
+        if not isinstance(row, dict):
+            continue
+        key = (
+            (row.get("station_id") or "").strip()
+            if station_first
+            else (row.get("stop_id") or "").strip()
+        )
+        if not key:
+            key = _format_search_candidate(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        labels.append(_format_search_candidate(row))
+        if len(labels) >= max_items:
+            break
+    return [f"{idx}. {label}" for idx, label in enumerate(labels, start=1)]
+
+
 def compute_route_from_queries(
     from_query: str,
     to_query: str,
@@ -115,32 +215,22 @@ def compute_route_from_queries(
     use_lcc: bool = True,
     routing_scope: RoutingScope = "station",
     station_first: bool = True,
-    auto_pick: bool = True,
+    auto_pick: bool = False,
 ) -> dict[str, Any]:
     """Search both endpoints, resolve ambiguity, compute route server-side."""
     from_r = resolve_stop_query(
-        from_query, mode=mode, use_lcc=use_lcc, station_first=station_first
+        from_query, mode=mode, use_lcc=use_lcc, station_first=station_first, auto_pick=auto_pick
     )
-    to_r = resolve_stop_query(to_query, mode=mode, use_lcc=use_lcc, station_first=station_first)
+    to_r = resolve_stop_query(to_query, mode=mode, use_lcc=use_lcc, station_first=station_first, auto_pick=auto_pick)
     route_use_lcc = use_lcc
-    route_mode: GraphMode = mode
     if from_r.get("use_lcc") is False or to_r.get("use_lcc") is False:
         route_use_lcc = False
-    if from_r.get("mode") and from_r.get("mode") != mode:
-        route_mode = from_r["mode"]
-    elif to_r.get("mode") and to_r.get("mode") != mode:
-        route_mode = to_r["mode"]
-    if (
-        from_r.get("use_lcc") != route_use_lcc
-        or to_r.get("use_lcc") != route_use_lcc
-        or from_r.get("mode") != route_mode
-        or to_r.get("mode") != route_mode
-    ):
+    if route_use_lcc != use_lcc:
         from_r = resolve_stop_query(
-            from_query, mode=route_mode, use_lcc=route_use_lcc, station_first=station_first
+            from_query, mode=mode, use_lcc=route_use_lcc, station_first=station_first, auto_pick=auto_pick
         )
         to_r = resolve_stop_query(
-            to_query, mode=route_mode, use_lcc=route_use_lcc, station_first=station_first
+            to_query, mode=mode, use_lcc=route_use_lcc, station_first=station_first, auto_pick=auto_pick
         )
 
     out: dict[str, Any] = {
@@ -148,7 +238,7 @@ def compute_route_from_queries(
         "from": from_r,
         "to": to_r,
         "routing_scope": routing_scope,
-        "mode": route_mode,
+        "mode": mode,
         "use_lcc": route_use_lcc,
     }
 
@@ -156,9 +246,25 @@ def compute_route_from_queries(
         out["needs_user_choice"] = True
         out["error"] = {"message": "Ambiguous stop or station name", "details": []}
         if from_r["status"] == "ambiguous":
-            out["error"]["details"].append({"endpoint": "from", "query": from_query, "candidates": from_r.get("matches")})
+            cands = from_r.get("matches") or []
+            out["error"]["details"].append(
+                {
+                    "endpoint": "from",
+                    "query": from_query,
+                    "candidates": cands,
+                    "candidate_labels": _format_numbered_search_candidates(cands, station_first=station_first),
+                }
+            )
         if to_r["status"] == "ambiguous":
-            out["error"]["details"].append({"endpoint": "to", "query": to_query, "candidates": to_r.get("matches")})
+            cands = to_r.get("matches") or []
+            out["error"]["details"].append(
+                {
+                    "endpoint": "to",
+                    "query": to_query,
+                    "candidates": cands,
+                    "candidate_labels": _format_numbered_search_candidates(cands, station_first=station_first),
+                }
+            )
         agent_store.record_event("transport.route.ambiguous", out, source="agent_tools")
         return out
 
@@ -174,12 +280,12 @@ def compute_route_from_queries(
         if not fsta or not tsta:
             out["error"] = {"message": "Missing station IDs for station routing"}
             return out
-        route = te.compute_route_stations(fsta, tsta, mode=route_mode, use_lcc=route_use_lcc)
+        route = te.compute_route_stations(fsta, tsta, mode=mode, use_lcc=route_use_lcc)
     else:
         if not fs or not ts:
             out["error"] = {"message": "Missing stop IDs for stop routing"}
             return out
-        route = te.compute_route(fs, ts, mode=route_mode, use_lcc=route_use_lcc)
+        route = te.compute_route(fs, ts, mode=mode, use_lcc=route_use_lcc)
 
     out["ok"] = bool(route.get("ok"))
     out["route"] = route
@@ -197,7 +303,8 @@ def compute_route_from_queries(
                     "station_names": route.get("station_names"),
                     "result": route.get("result"),
                     "mode": mode,
-                    "use_lcc": use_lcc,
+                    "graph_mode": mode,
+                    "use_lcc": route_use_lcc,
                     "routing_scope": routing_scope,
                 }
             }
@@ -245,6 +352,12 @@ def create_graph3d_for_route(
         graph_viz_mode=graph_viz_mode,
         path_stop_ids=route.get("path"),
         path_station_ids=route.get("station_path"),
+        route_legs=route.get("path_legs"),
+        route_meta=(
+            " · ".join(str(x) for x in (route.get("path_summary") or []) if x)
+            if route.get("path_summary")
+            else None
+        ),
     )
     agent_store.record_event(
         "transport.graph3d.session",
@@ -297,6 +410,10 @@ def shell_commands_for_route(route_payload: dict[str, Any]) -> list[dict[str, An
             rv["route_meta"] = " · ".join(str(line) for line in route["path_summary"] if line)
         elif meta_bits:
             rv["route_meta"] = ", ".join(meta_bits)
+        if route_payload.get("mode"):
+            rv["graph_mode"] = route_payload["mode"]
+        if "use_lcc" in route_payload:
+            rv["use_lcc"] = route_payload["use_lcc"]
         if rv:
             cmds.append({"kind": "transport_route_view", **rv})
     else:

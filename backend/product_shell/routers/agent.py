@@ -56,11 +56,15 @@ def get_agent_events(
 @router.post("/agent/transport/route", response_model=AgentTransportRouteResponse)
 def post_agent_transport_route(body: AgentTransportRouteRequest) -> AgentTransportRouteResponse:
     """Resolve stop names, compute route server-side, optionally sync UI and create 3D session."""
+    route_mode, route_use_lcc = agent_store.active_transport_prefs(
+        fallback_mode=body.mode,
+        fallback_lcc=body.use_lcc,
+    )
     result = agent_tools.compute_route_from_queries(
         body.from_query,
         body.to_query,
-        mode=body.mode,
-        use_lcc=body.use_lcc,
+        mode=route_mode,
+        use_lcc=route_use_lcc,
         routing_scope=body.routing_scope,
         station_first=body.station_first,
     )
@@ -75,8 +79,8 @@ def post_agent_transport_route(body: AgentTransportRouteRequest) -> AgentTranspo
     if result.get("ok") and body.open_graph3d:
         graph3d = agent_tools.create_graph3d_for_route(
             result,
-            mode=body.mode,
-            use_lcc=body.use_lcc,
+            mode=route_mode,
+            use_lcc=route_use_lcc,
             graph_viz_mode=body.graph_viz_mode,
         )
         if graph3d.get("ok") and graph3d.get("sync_client_id"):

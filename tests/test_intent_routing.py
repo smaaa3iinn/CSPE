@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "src" / "work" / "atlas" / "src"))
 from atlas_client.router.central_intent_router import route_intent  # noqa: E402
 from atlas_client.router.domain_routers import route_transport, route_poi, route_visual_3d  # noqa: E402
 from atlas_client.router.intent_fallback import try_deterministic_intent  # noqa: E402
+from atlas_client.router.intent_ui_control import try_ui_settings_intent  # noqa: E402
 from atlas_client.router.intent_schema import IntentEntities, StructuredIntent  # noqa: E402
 from atlas_client.router.tool_executor import list_tools  # noqa: E402
 from atlas_client.router.tool_plan_adapter import routing_decision_to_planner_plan  # noqa: E402
@@ -49,7 +50,9 @@ REPUBLIQUE_POI_CTX = {
 
 
 def _route(user_text: str, *, agent_context=None):
-    intent = try_deterministic_intent(user_text, agent_context=agent_context)
+    intent = try_ui_settings_intent(user_text) or try_deterministic_intent(
+        user_text, agent_context=agent_context
+    )
     if intent is None:
         intent = StructuredIntent(
             domain="general_chat",
@@ -254,6 +257,41 @@ class IntentRoutingTests(unittest.TestCase):
         self.assertTrue(decision.normalized_intent.ui_action)
         self.assertIn(plan.steps[0].tool, ("cspe_nearby_pois", "cspe_explore_area"))
         self.assertTrue(plan.steps[0].arguments.get("sync_ui"))
+
+    def test_switch_to_rail_mode(self):
+        from atlas_client.router.intent_ui_control import try_ui_settings_intent  # noqa: E402
+
+        intent = try_ui_settings_intent("switch to rail mode")
+        self.assertIsNotNone(intent)
+        self.assertEqual(intent.intent, "map_action")
+        decision, plan = _route("switch to rail mode")
+        self.assertEqual(plan.steps[0].tool, "cspe_transport_action")
+        self.assertEqual(plan.steps[0].arguments["spec"]["graph_mode"], "rail")
+        self.assertEqual(plan.steps[0].arguments["spec"]["run"], "none")
+
+    def test_general_chat_defers_to_realtime(self):
+        decision, plan = _route("who are you? what can you do for me?")
+        self.assertEqual(decision.normalized_intent.intent, "general_chat")
+        self.assertEqual(plan.status, "direct")
+        self.assertTrue(plan.defer_to_realtime)
+        self.assertEqual(plan.final_summary_hint, "")
+        self.assertEqual(len(plan.steps), 0)
+
+    def test_general_chat_direct_summary_is_not_done_fallback(self):
+        from atlas_client.core.agent_planner import resolve_direct_final_summary  # noqa: E402
+        from atlas_client.router.planner_plan import plan_defer_realtime  # noqa: E402
+
+        plan = plan_defer_realtime()
+        self.assertEqual(resolve_direct_final_summary(plan, "hello"), "")
+        self.assertEqual(resolve_direct_final_summary(plan, "bonjour"), "")
+
+    def test_ui_direct_plan_still_uses_done_fallback(self):
+        from atlas_client.core.agent_planner import resolve_direct_final_summary  # noqa: E402
+        from atlas_client.router.planner_plan import plan_direct  # noqa: E402
+
+        plan = plan_direct(source="legacy", summary="", hint="")
+        self.assertEqual(resolve_direct_final_summary(plan, "hello"), "Done.")
+        self.assertEqual(resolve_direct_final_summary(plan, "bonjour"), "Terminé.")
 
 
 if __name__ == "__main__":

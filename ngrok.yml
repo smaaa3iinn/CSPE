@@ -1,0 +1,14 @@
+version: "3"
+agent:
+  authtoken: 3FGiQj7Ktfz0Ow36QPvktbm67GB_82MBNsCS55UKsghP62nYs
+
+tunnels:
+  api:
+    proto: http
+    addr: 8787
+    inspect: false
+
+  graphxr:
+    proto: http
+    addr: 3000
+    inspect: false

@@ -11,7 +11,7 @@ import {
 } from '@babylonjs/core';
 import SceneComponent from '@/app/components/3DandXRComponents/Scene/SceneComponent';
 import { GraphRenderer } from '../utils/GraphRenderer';
-import { setupCommonScene } from '../utils/SceneSetup';
+import { setupCommonScene, fitArcRotateCameraToGraph, updateArcRotateCameraClipPlanes } from '../utils/SceneSetup';
 
 interface GraphData {
     nodes: Array<{
@@ -49,16 +49,22 @@ const GraphSceneWeb = forwardRef<GraphSceneRef, GraphSceneProps>(({ data, onSele
     const [isSceneReady, setIsSceneReady] = useState(false);
     const nodeMeshesRef = useRef<Map<string, Mesh | InstancedMesh>>(new Map());
     const graphRenderer = useRef(new GraphRenderer());
+    const dataRef = useRef(data);
+    dataRef.current = data;
+    const onSelectRef = useRef(onSelect);
+    onSelectRef.current = onSelect;
+    const initialCameraFitDoneRef = useRef(false);
+
+    const invokeSelect = useCallback((item: any, type: 'node' | 'edge' | null) => {
+        onSelectRef.current?.(item, type);
+    }, []);
 
     useImperativeHandle(ref, () => ({
         resetCamera: () => {
             if (scene) {
                 const camera = scene.getCameraByName("camera") as ArcRotateCamera;
                 if (camera) {
-                    camera.setTarget(Vector3.Zero());
-                    camera.alpha = -Math.PI / 2;
-                    camera.beta = Math.PI / 2.5;
-                    camera.radius = 100;
+                    fitArcRotateCameraToGraph(camera, dataRef.current.nodes ?? []);
                 }
             }
         },
@@ -112,8 +118,6 @@ const GraphSceneWeb = forwardRef<GraphSceneRef, GraphSceneProps>(({ data, onSele
         camera.pinchPrecision = 10;
         camera.panningSensibility = 20;
         camera.wheelDeltaPercentage = 0.05;
-        camera.lowerRadiusLimit = 0.1;
-        camera.upperRadiusLimit = 10000;
         camera.inertia = 0.9;
         camera.angularSensibilityX = 800;
         camera.angularSensibilityY = 800;
@@ -135,6 +139,7 @@ const GraphSceneWeb = forwardRef<GraphSceneRef, GraphSceneProps>(({ data, onSele
 
     useEffect(() => {
         return () => {
+            initialCameraFitDoneRef.current = false;
             if (scene) {
                 graphRenderer.current.disposeGraph(nodeMeshesRef.current, scene);
             }
@@ -145,15 +150,27 @@ const GraphSceneWeb = forwardRef<GraphSceneRef, GraphSceneProps>(({ data, onSele
     useEffect(() => {
         if (!scene || !data) return;
 
-        // Clean up old graph
+        const graphExists = nodeMeshesRef.current.size > 0;
+        if (graphExists) {
+            const updated = graphRenderer.current.updatePositions(data, nodeMeshesRef.current);
+            if (updated) {
+                graphRenderer.current.updateVisibility(visibleNodeIds ?? null, visibleEdgeIds ?? null, nodeMeshesRef.current);
+                graphRenderer.current.updateLabelVisibility(!!showLabels, nodeMeshesRef.current, scene);
+                const camera = scene.getCameraByName("camera") as ArcRotateCamera;
+                if (camera) {
+                    updateArcRotateCameraClipPlanes(camera, data.nodes ?? []);
+                }
+                return;
+            }
+        }
+
         graphRenderer.current.disposeGraph(nodeMeshesRef.current, scene);
 
-        // Render graph
         graphRenderer.current.createNodes(
             data,
             scene,
             nodeMeshesRef.current,
-            onSelect,
+            invokeSelect,
             undefined,
             undefined,
             true
@@ -162,15 +179,23 @@ const GraphSceneWeb = forwardRef<GraphSceneRef, GraphSceneProps>(({ data, onSele
             data,
             scene,
             nodeMeshesRef.current,
-            onSelect
+            invokeSelect
         );
 
-        // Force visibility update after creation
         graphRenderer.current.updateVisibility(visibleNodeIds ?? null, visibleEdgeIds ?? null, nodeMeshesRef.current);
-        // Force label update
         graphRenderer.current.updateLabelVisibility(!!showLabels, nodeMeshesRef.current, scene);
 
-    }, [scene, data, onSelect]); // visibleNodeIds is handled by separate effect, but we need initial state
+        const camera = scene.getCameraByName("camera") as ArcRotateCamera;
+        if (camera) {
+            if (!initialCameraFitDoneRef.current) {
+                fitArcRotateCameraToGraph(camera, data.nodes ?? []);
+                initialCameraFitDoneRef.current = true;
+            } else {
+                updateArcRotateCameraClipPlanes(camera, data.nodes ?? []);
+            }
+        }
+
+    }, [scene, data, invokeSelect, visibleNodeIds, visibleEdgeIds, showLabels]);
 
     return (
         <div className="h-full w-full overflow-hidden rounded-xl bg-black/20 relative" style={{ touchAction: 'none' }}>

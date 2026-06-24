@@ -30,7 +30,7 @@ class StationLayerIndex:
     stop_to_station: dict[str, str]
     station_to_stops: dict[str, list[str]]
     station_label: dict[str, str]
-    station_centroid: dict[str, tuple[float, float]]  # lon, lat
+    station_centroid: dict[str, tuple[float, float]]  # lon, lat of main platform stop
     parent_station_raw: dict[str, str] = field(default_factory=dict)  # stop_id -> parent id from GTFS if any
 
 
@@ -79,6 +79,64 @@ def _load_parent_station_map(project_root: Path) -> dict[str, str]:
         if out:
             return out
     return {}
+
+
+def _is_transfer_edge(data: dict[str, Any]) -> bool:
+    ek = str(data.get("edge_kind") or "")
+    modes = str(data.get("mode") or data.get("modes") or "")
+    return ek == "transfer" or modes == "transfer"
+
+
+def _ride_edge_degree(G: nx.Graph, stop_id: str) -> int:
+    if stop_id not in G:
+        return 0
+    return sum(
+        1
+        for _u, _v, data in G.edges(stop_id, data=True)
+        if not _is_transfer_edge(data)
+    )
+
+
+def _gtfs_parent_in_group(members: list[str], parent_map: dict[str, str]) -> str | None:
+    """Return the GTFS parent stop id when it belongs to the same station group."""
+    member_set = set(members)
+    parent_votes: dict[str, int] = {}
+    for sid in members:
+        parent_id = parent_map.get(sid)
+        if parent_id and parent_id in member_set:
+            parent_votes[parent_id] = parent_votes.get(parent_id, 0) + 1
+    if not parent_votes:
+        return None
+    return max(parent_votes.keys(), key=lambda pid: (parent_votes[pid], pid))
+
+
+def _pick_main_platform_stop(
+    G: nx.Graph,
+    members: list[str],
+    parent_map: dict[str, str],
+) -> str | None:
+    """
+    Pick one representative platform stop for map placement.
+
+    Prefer the GTFS parent stop when present; otherwise the most connected
+    non-transfer stop (stable tie-break on stop_id).
+    """
+    with_coords = [sid for sid in members if _node_lon_lat(G, sid)]
+    if not with_coords:
+        return members[0] if members else None
+
+    parent_id = _gtfs_parent_in_group(with_coords, parent_map)
+    if parent_id and _node_lon_lat(G, parent_id):
+        return parent_id
+
+    return min(
+        with_coords,
+        key=lambda sid: (
+            -_ride_edge_degree(G, sid),
+            -int(G.degree(sid)) if sid in G else 0,
+            sid,
+        ),
+    )
 
 
 def _node_lon_lat(G: nx.Graph, stop_id: str) -> tuple[float, float] | None:
@@ -202,20 +260,9 @@ def build_station_layer(
         labels = [str(G.nodes[s].get("stop_name") or s) for s in members]
         labels.sort()
         station_label[station_id] = labels[0] if labels else station_id
-        acc_lon = acc_lat = 0.0
-        npt = 0
-        for sid in members:
-            ll = _node_lon_lat(G, sid)
-            if ll:
-                lon, lat = ll
-                acc_lon += lon
-                acc_lat += lat
-                npt += 1
-        if npt:
-            station_centroid[station_id] = (acc_lon / npt, acc_lat / npt)
-        elif members:
-            ll = _node_lon_lat(G, members[0])
-            station_centroid[station_id] = ll if ll else (0.0, 0.0)
+        main_stop = _pick_main_platform_stop(G, members, parent_map)
+        ll = _node_lon_lat(G, main_stop) if main_stop else None
+        station_centroid[station_id] = ll if ll else (0.0, 0.0)
 
     return StationLayerIndex(
         stop_to_station=stop_to_station,
@@ -382,7 +429,7 @@ def station_path_segment_geojson(
     selected_station_id: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """
-    Station overlay limited to an ordered route: centroids + lines between consecutive stations.
+    Station overlay limited to an ordered route: main platform stops + lines between consecutive stations.
     Used after a path is computed so the map does not show the full station graph.
     """
     collapsed = _collapse_station_path_for_overlay(station_path, idx)

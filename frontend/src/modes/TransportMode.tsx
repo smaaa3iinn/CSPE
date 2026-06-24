@@ -10,6 +10,7 @@ import {
 } from "../api/client";
 import { postAgentEvent } from "../api/agentFeedback";
 import { useAppStore } from "../store";
+import { is2dPrimaryDisplay, useDisplaySessionStore } from "../displaySession/displaySessionStore";
 import { lineSuffix, resolveEndpointFromMatches } from "../transport/atlasTransportResolve";
 import {
   markTransportActionProcessed,
@@ -38,7 +39,17 @@ import {
 import "./transport.css";
 import { AtlasFocusBar } from "../components/AtlasFocusBar";
 
-const GRAPH_MODES = ["all", "metro", "rail", "tram", "bus", "other"] as const;
+const GRAPH_MODES = ["all", "all_mb", "metro", "rail", "tram", "bus", "other"] as const;
+
+const GRAPH_MODE_LABELS: Record<(typeof GRAPH_MODES)[number], string> = {
+  all: "all",
+  all_mb: "ALL-MB",
+  metro: "metro",
+  rail: "rail",
+  tram: "tram",
+  bus: "bus",
+  other: "other",
+};
 
 export function TransportMode() {
   const graphMode = useAppStore((s) => s.transportGraphMode);
@@ -67,6 +78,10 @@ export function TransportMode() {
 
   const transportExplorationSeq = useAppStore((s) => s.transportExplorationSeq);
   const mapChromeHidden = useAppStore((s) => s.transportMapChromeHidden);
+  const activeDisplayMode = useDisplaySessionStore((s) => s.activeDisplayMode);
+  const openVrDevSession = useDisplaySessionStore((s) => s.openVrDevSession);
+  const is2dDisplay = is2dPrimaryDisplay(activeDisplayMode);
+  const vrDevActive = activeDisplayMode === "vr_dev";
   const setTransportExploration = useAppStore((s) => s.setTransportExploration);
   const mapSelectedStopId = useAppStore((s) => s.transportMapSelectionStopId);
   const mapSelectedStationId = useAppStore((s) => s.transportMapSelectionStationId);
@@ -373,7 +388,8 @@ export function TransportMode() {
   ]);
 
   const showMapbox = viz === "geographic" || viz === "network_3d";
-  const showGraph3d = viz === "graph3d";
+  /** Embedded GraphXR in the main map is disabled — 3D/VR uses /vr-viewer in a separate tab. */
+  const showGraph3d = false;
 
   useEffect(() => {
     if (!showMapbox) return;
@@ -395,7 +411,7 @@ export function TransportMode() {
   }, [mapUrl, schedulePendingExplorationDelivery]);
 
   useEffect(() => {
-    if (!showMapbox) return;
+    if (!showMapbox || !is2dDisplay) return;
     scheduleBaseMapRefresh();
   }, [
     graphMode,
@@ -409,6 +425,7 @@ export function TransportMode() {
     pathStationIds,
     transportExplorationSeq,
     scheduleBaseMapRefresh,
+    is2dDisplay,
   ]);
 
   const loadGraph3dViewer = useCallback(async (forceReload = false) => {
@@ -416,7 +433,7 @@ export function TransportMode() {
     setLaunchingGraph3d(true);
     try {
       enableGraph3dLiveSync();
-      const { viewerUrl, fingerprint } = await pushGraph3dViewSync();
+      const { viewerUrl, fingerprint } = await pushGraph3dViewSync(true);
       lastGraph3dSyncedFpRef.current = fingerprint;
       setGraph3dViewerUrl((prev) => (forceReload || !prev ? viewerUrl : prev));
     } catch (e) {
@@ -425,6 +442,12 @@ export function TransportMode() {
       setLaunchingGraph3d(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (viz !== "graph3d") return;
+    openVrDevSession();
+    setViz("geographic");
+  }, [viz, openVrDevSession, setViz]);
 
   useEffect(() => {
     if (!showGraph3d) return;
@@ -488,7 +511,7 @@ export function TransportMode() {
     graph3dSyncTimerRef.current = window.setTimeout(() => {
       void (async () => {
         try {
-          const { fingerprint } = await pushGraph3dViewSync();
+          const { fingerprint } = await pushGraph3dViewSync(true);
           lastGraph3dSyncedFpRef.current = fingerprint;
         } catch {
           /* embedded viewer polls sync and reloads session internally */
@@ -662,7 +685,13 @@ export function TransportMode() {
     if (spec.open_app_mode === "transport") setMode("transport");
     if (spec.graph_mode !== undefined) setGraphMode(spec.graph_mode);
     if (spec.use_lcc !== undefined) setUseLcc(spec.use_lcc);
-    if (spec.viz !== undefined) setViz(spec.viz);
+    if (spec.viz !== undefined) {
+      if (spec.viz === "graph3d") {
+        openVrDevSession();
+      } else {
+        setViz(spec.viz);
+      }
+    }
     if (spec.graph_viz !== undefined) {
       setGraphViz(spec.graph_viz);
     } else if (spec.routing_scope !== undefined) {
@@ -1118,7 +1147,9 @@ export function TransportMode() {
 
   return (
     <div
-      className={`transport-root${mapChromeHidden ? " transport-root--chrome-hidden" : ""}`}
+      className={`transport-root${
+        mapChromeHidden && !showGraph3d ? " transport-root--chrome-hidden" : ""
+      }${showGraph3d ? " transport-root--graph3d-fullscreen" : ""}`}
     >
       <div className="transport-map-wrap">
         {showGraph3d ? (
@@ -1169,6 +1200,17 @@ export function TransportMode() {
         )}
       </div>
 
+      {showGraph3d && (
+        <button
+          type="button"
+          className="transport-graph3d-exit"
+          onClick={() => setViz("geographic")}
+          title="Return to map view"
+        >
+          ← Map
+        </button>
+      )}
+
       <div className="transport-left-stack">
         <div className="transport-float transport-float--stack-panel">
           <div className="transport-section-label">Visualization</div>
@@ -1190,16 +1232,11 @@ export function TransportMode() {
             </button>
             <button
               type="button"
-              className={`transport-btn-viz${viz === "graph3d" ? " active" : ""}`}
-              onClick={() => setViz("graph3d")}
-              disabled={launchingGraph3d}
-              title={
-                pathIds && pathIds.length > 0
-                  ? "Network graph in 3D/VR (GraphXR)"
-                  : "Network graph in 3D/VR (GraphXR)"
-              }
+              className={`transport-btn-viz${vrDevActive ? " active" : ""} transport-btn-graph3d`}
+              onClick={() => openVrDevSession()}
+              title="Open 3D/VR dev viewer in a new tab"
             >
-              {launchingGraph3d && viz === "graph3d" ? "Loading…" : "3D/VR graph"}
+              3D/VR graph
             </button>
           </div>
           {graph3dErr && viz === "graph3d" && <div className="transport-route-err">{graph3dErr}</div>}
@@ -1241,7 +1278,7 @@ export function TransportMode() {
                 className={`transport-btn-mode${graphMode === m ? " active" : ""}`}
                 onClick={() => setGraphMode(m)}
               >
-                {m}
+                {GRAPH_MODE_LABELS[m]}
               </button>
             ))}
           </div>
@@ -1464,7 +1501,7 @@ export function TransportMode() {
         </div>
       </div>
 
-      {mapChromeHidden && <AtlasFocusBar />}
+      {mapChromeHidden && !showGraph3d && <AtlasFocusBar />}
     </div>
   );
 }

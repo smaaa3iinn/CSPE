@@ -14,12 +14,32 @@ _events: deque[dict[str, Any]] = deque(maxlen=_MAX_EVENTS)
 
 _world_state: dict[str, Any] = {
     "ui_mode": "transport",
-    "transport": {},
+    "transport": {"graph_mode": "all_mb", "use_lcc": False},
     "last_shell_commands": [],
     "updated_at": None,
 }
 
 _pending_tasks: dict[str, dict[str, Any]] = {}
+
+GRAPH_MODES = frozenset({"all", "all_mb", "metro", "rail", "tram", "bus", "other"})
+
+
+def active_transport_prefs(
+    *,
+    fallback_mode: str = "all_mb",
+    fallback_lcc: bool = False,
+) -> tuple[str, bool]:
+    """Active transport graph mode / LCC from browser-synced world state."""
+    with _lock:
+        transport = _world_state.get("transport")
+    if not isinstance(transport, dict):
+        transport = {}
+    gm = str(transport.get("graph_mode") or "").strip()
+    mode = gm if gm in GRAPH_MODES else str(fallback_mode or "all_mb")
+    if mode not in GRAPH_MODES:
+        mode = "all_mb"
+    use_lcc = bool(transport.get("use_lcc")) if "use_lcc" in transport else bool(fallback_lcc)
+    return mode, use_lcc
 
 
 def utc_iso() -> str:
@@ -58,6 +78,12 @@ def patch_world_state(patch: dict[str, Any]) -> dict[str, Any]:
                     cur = {}
                 cur.update(v)
                 _world_state["transport"] = cur
+            elif k == "ux" and isinstance(v, dict):
+                cur = _world_state.get("ux")
+                if not isinstance(cur, dict):
+                    cur = {}
+                cur.update(v)
+                _world_state["ux"] = cur
             else:
                 _world_state[k] = v
         _world_state["updated_at"] = utc_iso()

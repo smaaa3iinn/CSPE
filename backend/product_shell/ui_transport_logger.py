@@ -159,6 +159,13 @@ _EXPLORATION_CLIENT_EVENTS = frozenset(
     }
 )
 
+_ALWAYS_LOG_CLIENT_EVENTS = frozenset(
+    {
+        "shell_poll_error",
+        "ui_commands_applied",
+    }
+)
+
 
 def _exploration_center_label(payload: dict[str, Any]) -> str:
     center = payload.get("center") if isinstance(payload.get("center"), dict) else {}
@@ -327,6 +334,8 @@ def log_atlas_transport_action_enqueued(payload: dict[str, Any]) -> None:
 
 
 def log_atlas_transport_client_event(event: str, payload: dict[str, Any]) -> None:
+    if event in _ALWAYS_LOG_CLIENT_EVENTS:
+        log_compact_line(f"[UICommand] client {event} data={_dumps(payload)[:240]}")
     if event in _EXPLORATION_CLIENT_EVENTS:
         _log_exploration_client_compact(event, payload)
         if not is_compact_mode():

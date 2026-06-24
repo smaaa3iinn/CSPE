@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from backend.product_shell import ui_transport_logger as ui_log
+from src.core.project_logs import generate_correlation_id, log_compact_line
 
 router = APIRouter(tags=["shell"])
 
@@ -23,9 +24,34 @@ _queue: deque[dict[str, Any]] = deque(maxlen=_MAX)
 _sse_subscribers: list[queue.Queue[str]] = []
 _total_enqueued = 0
 
+_turn_local = threading.local()
+
 
 class ShellEnqueueBody(BaseModel):
     commands: list[dict[str, Any]] = Field(..., min_length=1)
+
+
+def begin_turn_capture(command_id: str | None = None) -> str:
+    """Start collecting shell commands enqueued during one `/api/chat` turn."""
+    cid = (command_id or "").strip() or generate_correlation_id()
+    _turn_local.capture_id = cid
+    _turn_local.commands: list[dict[str, Any]] = []
+    return cid
+
+
+def end_turn_capture() -> dict[str, Any] | None:
+    """Return captured commands for inline delivery; clears turn capture state."""
+    cid = getattr(_turn_local, "capture_id", None)
+    cmds = getattr(_turn_local, "commands", None) or []
+    _turn_local.capture_id = None
+    _turn_local.commands = []
+    if not cmds:
+        return None
+    return {"command_id": str(cid or generate_correlation_id()), "commands": list(cmds)}
+
+
+def is_turn_capture_active() -> bool:
+    return bool(getattr(_turn_local, "capture_id", None))
 
 
 def enqueue_commands(commands: list[dict[str, Any]]) -> int:
@@ -49,6 +75,24 @@ def enqueue_commands(commands: list[dict[str, Any]]) -> int:
                 elif k == "transport_exploration_view":
                     ui_log.log_exploration_shell_enqueue(cc)
         _total_enqueued += n
+        pending_after = len(_queue)
+
+    if batch:
+        kinds = ",".join(str(c.get("kind") or "?") for c in batch)
+        log_compact_line(
+            f"[UICommand] phase=enqueued count={len(batch)} pending={pending_after} kinds={kinds}"
+        )
+
+    capture_id = getattr(_turn_local, "capture_id", None)
+    if capture_id and batch:
+        turn_cmds = getattr(_turn_local, "commands", None)
+        if turn_cmds is not None:
+            turn_cmds.extend(batch)
+        kinds = ",".join(str(c.get("kind") or "?") for c in batch)
+        log_compact_line(
+            f"[UICommand] phase=captured cid={capture_id} count={len(batch)} kinds={kinds}"
+        )
+
     if batch and subs:
         payload = json.dumps({"commands": batch}, default=str)
         for q in subs:
